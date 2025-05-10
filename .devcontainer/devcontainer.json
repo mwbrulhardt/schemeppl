@@ -1,0 +1,34 @@
+{
+    "name": "schemeppl",
+    "image": "mcr.microsoft.com/devcontainers/base:jammy",
+    "postCreateCommand": "bash .devcontainer/post-create.sh",
+    "features": {
+      "ghcr.io/devcontainers/features/rust:1": {},
+      "ghcr.io/devcontainers/features/node:1": {}
+    },
+    // Use 'forwardPorts' to make a list of ports inside the container available locally.
+    "forwardPorts": [],
+    // Configure tool-specific properties.
+    "customizations": {
+      "vscode": {
+        "settings": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
+          // Forward SSH agent
+          "remote.containers.forwardAgent": true
+        },
+        "extensions": [
+          "wayou.vscode-todo-highlight",
+          "timonwong.shellcheck",
+          "esbenp.prettier-vscode",
+          "tamasfe.even-better-toml",
+          "donjayamanne.githistory",
+          "mechatroner.rainbow-csv",
+          "GrapeCity.gc-excelviewer",
+          "Gruntfuggly.todo-tree",
+          "yzhang.markdown-all-in-one",
+          "bierner.markdown-mermaid"
+        ]
+      }
+    },
+    "remoteUser": "vscode"
+  }
