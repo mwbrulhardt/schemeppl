@@ -403,7 +403,7 @@ export default function Charts({ state, parameters }: ChartsProps) {
         }
       });
     }
-  }, [state]);
+  }, [parameters.mean1, parameters.mean2, state]);
 
   // Update charts when state or parameters change
   useEffect(() => {
