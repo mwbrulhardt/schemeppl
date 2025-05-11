@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["appl/wasm"]
+members = ["crates/wasm", "crates/ppl"]
 
 [workspace.package]
 version = "0.1.0"
