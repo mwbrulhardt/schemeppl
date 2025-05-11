@@ -28,14 +28,6 @@ jobs:
       - name: Install wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
 
-      # - name: Install dependencies (Yarn)
-      #   run: yarn install
-      #   working-directory: appl
-
-      # - name: Build WASM and Next.js app
-      #   run: yarn build
-      #   working-directory: appl
-
       - name: Install Vercel CLI
         run: yarn global add vercel@latest
 
@@ -44,10 +36,15 @@ jobs:
         run: |
           vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
-      - name: Build output for Vercel
+      - name: Build output for Vercel (Preview or Production)
         working-directory: appl
         run: |
-          vercel build --token=${{ secrets.VERCEL_TOKEN }}
+          
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+          else
+            vercel build --token=${{ secrets.VERCEL_TOKEN }}
+          fi
 
       - name: Deploy to Vercel (Preview or Production)
         working-directory: appl
