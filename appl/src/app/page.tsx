@@ -5,9 +5,8 @@ import { Chart, registerables } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
 import Controls from '@/components/Controls';
 import Charts from '@/components/Charts';
-import Stats from '@/components/Stats';
 import AlgorithmDescription from '@/components/AlgorithmDescription';
-import { useMetropolisHastings } from '../hooks/useMetropolisHastings';
+import { useSimulator } from '../hooks/useSimulator';
 
 // Register Chart.js plugins
 Chart.register(...registerables, annotationPlugin);
@@ -25,7 +24,7 @@ export default function Home() {
     updateParameters,
     state,
     parameters
-  } = useMetropolisHastings();
+  } = useSimulator();
 
   useEffect(() => {
     if (algorithm) {
@@ -75,7 +74,7 @@ export default function Home() {
 
       <Charts state={state} parameters={parameters} />
 
-      <Stats state={state} parameters={parameters} />
+      {/*<Stats state={state} parameters={parameters} />*/}
 
       <AlgorithmDescription />
     </main>

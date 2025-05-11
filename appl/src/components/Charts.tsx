@@ -21,11 +21,14 @@ interface Parameters {
 }
 
 interface SimulationState {
-  current_x: number;
-  proposed_x: number;
+  mu1: number;
+  mu2: number;
   acceptance_ratio: number;
-  samples: number[];
-  steps: Array<{ x: number; accepted: boolean }>;
+  samples: {
+    mu1: number[];
+    mu2: number[];
+  };
+  steps: Array<{ mu1: number; mu2: number; accepted: boolean }>;
   distribution: Array<{ x: number; pdf: number }>;
   histogram: Array<{ x: number; frequency: number }>;
 }
@@ -35,11 +38,22 @@ interface ChartsProps {
   parameters: Parameters;
 }
 
+// Helper for kernel density estimation
+function kernelDensityEstimate(samples: number[], xVals: number[], bandwidth = 0.2) {
+  const norm = 1 / (Math.sqrt(2 * Math.PI) * bandwidth * samples.length);
+  return xVals.map(x => ({
+    x,
+    y: samples.reduce((sum, xi) => sum + Math.exp(-0.5 * Math.pow((x - xi) / bandwidth, 2)), 0) * norm
+  }));
+}
+
 export default function Charts({ state, parameters }: ChartsProps) {
   const distributionChartRef = useRef<Chart | null>(null);
   const traceChartRef = useRef<Chart | null>(null);
   const component1TraceChartRef = useRef<Chart | null>(null);
   const component2TraceChartRef = useRef<Chart | null>(null);
+  const mu1DensityChartRef = useRef<Chart | null>(null);
+  const mu2DensityChartRef = useRef<Chart | null>(null);
 
   // Initialize charts
   useEffect(() => {
@@ -58,15 +72,28 @@ export default function Charts({ state, parameters }: ChartsProps) {
               borderWidth: 2,
               pointRadius: 0,
               fill: false,
-              data: []
+              data: [],
+              yAxisID: 'y',
             },
             {
-              label: 'Sample Histogram',
-              borderColor: 'rgba(153, 102, 255, 1)',
+              label: 'Posterior μ₁ Density',
+              borderColor: 'rgba(255, 99, 132, 0.7)',
               borderWidth: 2,
               pointRadius: 0,
               fill: false,
-              data: []
+              borderDash: [2, 2],
+              data: [],
+              yAxisID: 'y2',
+            },
+            {
+              label: 'Posterior μ₂ Density',
+              borderColor: 'rgba(54, 162, 235, 0.7)',
+              borderWidth: 2,
+              pointRadius: 0,
+              fill: false,
+              borderDash: [2, 2],
+              data: [],
+              yAxisID: 'y2',
             }
           ]
         },
@@ -92,12 +119,25 @@ export default function Charts({ state, parameters }: ChartsProps) {
               title: {
                 display: true,
                 text: 'x'
-              }
+              },
+              min: -4,
+              max: 4
             },
             y: {
               title: {
                 display: true,
                 text: 'Probability Density'
+              },
+              position: 'left',
+            },
+            y2: {
+              title: {
+                display: true,
+                text: 'Posterior Density'
+              },
+              position: 'right',
+              grid: {
+                drawOnChartArea: false
               }
             }
           },
@@ -114,8 +154,16 @@ export default function Charts({ state, parameters }: ChartsProps) {
         data: {
           datasets: [
             {
-              label: 'All Samples',
+              label: 'μ₁ Samples',
               borderColor: 'rgba(75, 192, 192, 1)',
+              borderWidth: 2,
+              pointRadius: 0,
+              fill: false,
+              data: []
+            },
+            {
+              label: 'μ₂ Samples',
+              borderColor: 'rgba(255, 99, 132, 1)',
               borderWidth: 2,
               pointRadius: 0,
               fill: false,
@@ -167,7 +215,7 @@ export default function Charts({ state, parameters }: ChartsProps) {
         type: 'line',
         data: {
           datasets: [{
-            label: 'Component 1 Samples',
+            label: 'μ₁ Samples',
             borderColor: 'rgba(255, 99, 132, 1)',
             borderWidth: 2,
             pointRadius: 0,
@@ -181,7 +229,7 @@ export default function Charts({ state, parameters }: ChartsProps) {
           plugins: {
             title: {
               display: true,
-              text: 'Component 1 Trace Plot'
+              text: 'μ₁ Trace Plot'
             },
             tooltip: {
               mode: 'index',
@@ -204,7 +252,9 @@ export default function Charts({ state, parameters }: ChartsProps) {
               title: {
                 display: true,
                 text: 'Value'
-              }
+              },
+              min: parameters.mean1 - 0.5,
+              max: parameters.mean1 + 0.5
             }
           },
           animation: false
@@ -219,7 +269,7 @@ export default function Charts({ state, parameters }: ChartsProps) {
         type: 'line',
         data: {
           datasets: [{
-            label: 'Component 2 Samples',
+            label: 'μ₂ Samples',
             borderColor: 'rgba(54, 162, 235, 1)',
             borderWidth: 2,
             pointRadius: 0,
@@ -233,7 +283,7 @@ export default function Charts({ state, parameters }: ChartsProps) {
           plugins: {
             title: {
               display: true,
-              text: 'Component 2 Trace Plot'
+              text: 'μ₂ Trace Plot'
             },
             tooltip: {
               mode: 'index',
@@ -256,6 +306,96 @@ export default function Charts({ state, parameters }: ChartsProps) {
               title: {
                 display: true,
                 text: 'Value'
+              },
+              min: parameters.mean2 - 0.5,
+              max: parameters.mean2 + 0.5
+            }
+          },
+          animation: false
+        }
+      });
+    }
+
+    // μ₁ density chart
+    const mu1DensityCtx = document.getElementById('mu1-density-chart') as HTMLCanvasElement;
+    if (mu1DensityCtx && !mu1DensityChartRef.current) {
+      mu1DensityChartRef.current = new Chart(mu1DensityCtx, {
+        type: 'line',
+        data: {
+          datasets: [{
+            label: 'Posterior Density μ₁',
+            borderColor: 'rgba(255, 99, 132, 1)',
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: false,
+            data: []
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            title: {
+              display: true,
+              text: 'Posterior Density of μ₁'
+            }
+          },
+          scales: {
+            x: {
+              type: 'linear',
+              title: {
+                display: true,
+                text: 'μ₁'
+              }
+            },
+            y: {
+              title: {
+                display: true,
+                text: 'Density'
+              }
+            }
+          },
+          animation: false
+        }
+      });
+    }
+
+    // μ₂ density chart
+    const mu2DensityCtx = document.getElementById('mu2-density-chart') as HTMLCanvasElement;
+    if (mu2DensityCtx && !mu2DensityChartRef.current) {
+      mu2DensityChartRef.current = new Chart(mu2DensityCtx, {
+        type: 'line',
+        data: {
+          datasets: [{
+            label: 'Posterior Density μ₂',
+            borderColor: 'rgba(54, 162, 235, 1)',
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: false,
+            data: []
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            title: {
+              display: true,
+              text: 'Posterior Density of μ₂'
+            }
+          },
+          scales: {
+            x: {
+              type: 'linear',
+              title: {
+                display: true,
+                text: 'μ₂'
+              }
+            },
+            y: {
+              title: {
+                display: true,
+                text: 'Density'
               }
             }
           },
@@ -265,46 +405,75 @@ export default function Charts({ state, parameters }: ChartsProps) {
     }
   }, [state]);
 
-  // Update charts when state changes
+  // Update charts when state or parameters change
   useEffect(() => {
     if (!state) return;
 
     // Update distribution chart
     if (distributionChartRef.current) {
-      distributionChartRef.current.data.datasets[0].data = state.distribution.map(point => ({
-        x: point.x,
-        y: point.pdf
-      }));
-      distributionChartRef.current.data.datasets[1].data = state.histogram.map(bin => ({
-        x: bin.x,
-        y: bin.frequency
-      }));
+      // Use a fixed x grid for all curves
+      const xVals = Array.from({ length: 100 }, (_, i) => -4 + (8 * i) / 99);
+      
+      // Update x-axis scale based on means
+      const xMin = Math.min(parameters.mean1, parameters.mean2) - 2;
+      const xMax = Math.max(parameters.mean1, parameters.mean2) + 2;
+      if (distributionChartRef.current?.options?.scales?.x) {
+        distributionChartRef.current.options.scales.x.min = xMin;
+        distributionChartRef.current.options.scales.x.max = xMax;
+      }
+
+      // Target GMM (fixed)
+      distributionChartRef.current.data.datasets[0].data = xVals.map(x => {
+        const p1 = parameters.mixtureWeight * (1 / Math.sqrt(2 * Math.PI * parameters.variance1)) * Math.exp(-0.5 * Math.pow((x - parameters.mean1) / Math.sqrt(parameters.variance1), 2));
+        const p2 = (1 - parameters.mixtureWeight) * (1 / Math.sqrt(2 * Math.PI * parameters.variance2)) * Math.exp(-0.5 * Math.pow((x - parameters.mean2) / Math.sqrt(parameters.variance2), 2));
+        return { x, y: p1 + p2 };
+      });
+
+      // Posterior μ₁ density (kernel density estimate)
+      const mu1Samples = state.samples.mu1.slice(parameters.burnIn);
+      if (mu1Samples.length > 1) {
+        const density = kernelDensityEstimate(mu1Samples, xVals);
+        distributionChartRef.current.data.datasets[1].data = density;
+      } else {
+        distributionChartRef.current.data.datasets[1].data = [];
+      }
+
+      // Posterior μ₂ density (kernel density estimate)
+      const mu2Samples = state.samples.mu2.slice(parameters.burnIn);
+      if (mu2Samples.length > 1) {
+        const density = kernelDensityEstimate(mu2Samples, xVals);
+        distributionChartRef.current.data.datasets[2].data = density;
+      } else {
+        distributionChartRef.current.data.datasets[2].data = [];
+      }
+
+      // Update annotations
       if (distributionChartRef.current?.options?.plugins?.annotation) {
-        distributionChartRef.current.options.plugins.annotation.annotations = {
-          currentLine: {
-            type: 'line',
-            xMin: state.current_x,
-            xMax: state.current_x,
-            borderColor: 'blue',
-            borderWidth: 2
-          },
-          proposedLine: {
-            type: 'line',
-            xMin: state.proposed_x,
-            xMax: state.proposed_x,
-            borderColor: 'red',
-            borderWidth: 2,
-            borderDash: [5, 5]
-          }
-        } as AnnotationConfig;
+        distributionChartRef.current.options.plugins.annotation.annotations = {};
       }
       distributionChartRef.current.update();
     }
 
     // Update trace charts
     if (traceChartRef.current) {
-      const allSamples = state.samples.map((value, index) => ({ x: index, y: value }));
-      traceChartRef.current.data.datasets[0].data = allSamples;
+      const mu1Samples = state.samples.mu1
+        .map((value, index) => ({ x: index, y: value }))
+        .filter(point => point.x >= parameters.burnIn);
+      const mu2Samples = state.samples.mu2
+        .map((value, index) => ({ x: index, y: value }))
+        .filter(point => point.x >= parameters.burnIn);
+      
+      // Update y-axis scale based on means
+      const yMin = Math.min(parameters.mean1, parameters.mean2) - 1;
+      const yMax = Math.max(parameters.mean1, parameters.mean2) + 1;
+      if (traceChartRef.current?.options?.scales?.y) {
+        traceChartRef.current.options.scales.y.min = yMin;
+        traceChartRef.current.options.scales.y.max = yMax;
+      }
+
+      traceChartRef.current.data.datasets[0].data = mu1Samples;
+      traceChartRef.current.data.datasets[1].data = mu2Samples;
+      
       if (traceChartRef.current?.options?.plugins?.annotation) {
         traceChartRef.current.options.plugins.annotation.annotations = {
           burnIn: {
@@ -337,19 +506,21 @@ export default function Charts({ state, parameters }: ChartsProps) {
           }
         } as AnnotationConfig;
       }
-      traceChartRef.current?.update();
+      traceChartRef.current.update();
     }
 
     // Update component trace charts
-    const midpoint = (parameters.mean1 + parameters.mean2) / 2;
-    const comp1Samples = state.samples.filter(x => x < midpoint);
-    const comp2Samples = state.samples.filter(x => x >= midpoint);
-
     if (component1TraceChartRef.current) {
-      component1TraceChartRef.current.data.datasets[0].data = comp1Samples.map((value, index) => ({
-        x: index,
-        y: value
-      }));
+      component1TraceChartRef.current.data.datasets[0].data = state.samples.mu1
+        .slice(parameters.burnIn, parameters.numSamples)
+        .map((value, index) => ({ x: parameters.burnIn + index, y: value }));
+
+      // Update y-axis scale for component 1
+      if (component1TraceChartRef.current?.options?.scales?.y) {
+        component1TraceChartRef.current.options.scales.y.min = parameters.mean1 - 1;
+        component1TraceChartRef.current.options.scales.y.max = parameters.mean1 + 1;
+      }
+
       if (component1TraceChartRef.current.options?.plugins?.annotation) {
         component1TraceChartRef.current.options.plugins.annotation.annotations = {
           burnIn: {
@@ -373,10 +544,16 @@ export default function Charts({ state, parameters }: ChartsProps) {
     }
 
     if (component2TraceChartRef.current) {
-      component2TraceChartRef.current.data.datasets[0].data = comp2Samples.map((value, index) => ({
-        x: index,
-        y: value
-      }));
+      component2TraceChartRef.current.data.datasets[0].data = state.samples.mu2
+        .slice(parameters.burnIn, parameters.numSamples)
+        .map((value, index) => ({ x: parameters.burnIn + index, y: value }));
+
+      // Update y-axis scale for component 2
+      if (component2TraceChartRef.current?.options?.scales?.y) {
+        component2TraceChartRef.current.options.scales.y.min = parameters.mean2 - 1;
+        component2TraceChartRef.current.options.scales.y.max = parameters.mean2 + 1;
+      }
+
       if (component2TraceChartRef.current.options?.plugins?.annotation) {
         component2TraceChartRef.current.options.plugins.annotation.annotations = {
           burnIn: {

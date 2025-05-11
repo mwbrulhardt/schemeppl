@@ -4,6 +4,8 @@ use wasm_bindgen::prelude::*;
 use serde::{Serialize, Deserialize};
 use js_sys::Float64Array;
 use std::f64::consts::PI;
+use ppl::{GenerativeFunction, Trace, Value, Expression, mh, parse_string};
+use std::collections::{HashMap, HashSet};
 
 #[wasm_bindgen]
 extern "C" {
@@ -34,189 +36,153 @@ struct HistogramBin {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-struct SampleStep {
-    x: f64,
+struct Step {
+    mu1: f64,
+    mu2: f64,
     accepted: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 struct SimulationState {
-    current_x: f64,
-    proposed_x: f64,
+    mu1: f64,
+    mu2: f64,
     acceptance_ratio: f64,
-    samples: Vec<f64>,
-    steps: Vec<SampleStep>,
+    samples: Samples,
+    steps: Vec<Step>,
     distribution: Vec<Distribution>,
     histogram: Vec<HistogramBin>,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+struct Samples {
+    mu1: Vec<f64>,
+    mu2: Vec<f64>,
+}
+
+
 #[wasm_bindgen]
-pub struct MetropolisHastings {
-    // GMM parameters
-    mean1: f64,
-    mean2: f64,
-    variance1: f64,
-    variance2: f64,
-    mixture_weight: f64,
-    
-    // Algorithm parameters
-    proposal_std_dev: f64,
-    rng: ThreadRng,
-    
-    // State
-    current_x: f64,
-    proposed_x: Option<f64>,
-    burn_in: usize,
-    num_samples: usize,
+pub struct Simulator {
+    program: GenerativeFunction,
+    trace: Option<Trace<GenerativeFunction, String, Value>>,
+    scales: HashMap<String, f64>,
+    selection: HashSet<String>,
     current_step: usize,
     accepted_count: usize,
-    samples: Vec<f64>,
-    steps: Vec<SampleStep>,
+    steps: Vec<Step>,
+    burn_in: usize,
 }
 
 #[wasm_bindgen]
-impl MetropolisHastings {
+impl Simulator {
     #[wasm_bindgen(constructor)]
-    pub fn new(
-        mean1: f64,
-        mean2: f64,
-        variance1: f64,
-        variance2: f64,
-        mixture_weight: f64,
-        proposal_std_dev: f64,
-        burn_in: usize,
-        num_samples: usize
-    ) -> Self {
-        let mut rng = rand::thread_rng();
+    pub fn new(model: &str) -> Result<Simulator, String> {
+        // Parse the model string into PPL expressions
+        let exprs = parse_string(model);
         
-        // Start at the weighted mean
-        let current_x = mixture_weight * mean1 + (1.0 - mixture_weight) * mean2;
+        // Create scales for parameters
+        let mut scales = HashMap::new();
+        scales.insert("mu1".to_string(), 1.0);
+        scales.insert("mu2".to_string(), 1.0);
         
-        Self {
-            mean1,
-            mean2,
-            variance1,
-            variance2,
-            mixture_weight,
-            proposal_std_dev,
-            rng,
-            current_x,
-            proposed_x: None,
-            burn_in,
-            num_samples,
+        // Create the program
+        let program = GenerativeFunction::new(
+            exprs,
+            vec!["data".to_string()],
+            scales.clone(),
+            42
+        );
+        
+        Ok(Simulator {
+            program,
+            trace: None,
+            scales,
+            selection: HashSet::new(),
             current_step: 0,
             accepted_count: 0,
-            samples: Vec::new(),
             steps: Vec::new(),
-        }
+            burn_in: 100, // Default burn-in period
+        })
     }
     
-    // Update parameters
     #[wasm_bindgen]
-    pub fn update_parameters(
-        &mut self,
-        mean1: f64,
-        mean2: f64,
-        variance1: f64,
-        variance2: f64,
-        mixture_weight: f64,
-        proposal_std_dev: f64,
-        burn_in: usize,
-        num_samples: usize
-    ) {
-        self.mean1 = mean1;
-        self.mean2 = mean2;
-        self.variance1 = variance1;
-        self.variance2 = variance2;
-        self.mixture_weight = mixture_weight;
-        self.proposal_std_dev = proposal_std_dev;
-        self.burn_in = burn_in;
-        self.num_samples = num_samples;
+    pub fn initialize(&mut self, data: &[f64]) -> Result<(), String> {
+        // Convert data to PPL Value
+        let wrapped_data = Value::List(
+            data.iter()
+                .map(|&x| Value::Float(x))
+                .collect()
+        );
         
-        // Reset the state
-        self.reset();
+        // Simulate initial trace
+        self.trace = Some(self.program.simulate(vec![wrapped_data])?);
+
+        println!("Trace: {:?}", self.trace);
+        
+        // Set up selection for parameters
+        self.selection = HashSet::from_iter(
+            vec!["mu1".to_string(), "mu2".to_string()]
+        );
+        
+        Ok(())
     }
     
-    // Reset the simulation
     #[wasm_bindgen]
-    pub fn reset(&mut self) {
-        self.current_x = self.mixture_weight * self.mean1 + (1.0 - self.mixture_weight) * self.mean2;
-        self.proposed_x = None;
-        self.current_step = 0;
-        self.accepted_count = 0;
-        self.samples.clear();
-        self.steps.clear();
-    }
-    
-    // Calculate the target PDF (GMM with two components)
-    fn target_pdf(&self, x: f64) -> f64 {
-        let gaussian1 = self.gaussian_pdf(x, self.mean1, self.variance1);
-        let gaussian2 = self.gaussian_pdf(x, self.mean2, self.variance2);
-        self.mixture_weight * gaussian1 + (1.0 - self.mixture_weight) * gaussian2
-    }
-    
-    // Calculate a single Gaussian PDF
-    fn gaussian_pdf(&self, x: f64, mean: f64, variance: f64) -> f64 {
-        let exponent = -0.5 * (x - mean).powi(2) / variance;
-        (1.0 / (2.0 * PI * variance).sqrt()) * exponent.exp()
-    }
-    
-    // Run a single step of the algorithm
-    #[wasm_bindgen]
-    pub fn step(&mut self) -> bool {
-        // Propose a new sample from the proposal distribution (random walk)
-        let proposed = self.current_x + self.rng.gen_range(-self.proposal_std_dev..self.proposal_std_dev);
-        self.proposed_x = Some(proposed);
-        
-        // Calculate acceptance ratio
-        let target_current = self.target_pdf(self.current_x);
-        let target_proposed = self.target_pdf(proposed);
-        
-        // Symmetric proposal, so proposal densities cancel out
-        let accept_prob = (target_proposed / target_current).min(1.0);
-        
-        // Accept or reject the proposal
-        let u: f64 = self.rng.gen();
-        let mut accepted = false;
-        
-        if u < accept_prob {
-            self.current_x = proposed;
-            accepted = true;
-            self.accepted_count += 1;
-        }
-        
-        // Record the step
-        self.steps.push(SampleStep {
-            x: self.current_x,
-            accepted,
-        });
-        
-        // Only add to samples after burn-in period
-        if self.current_step >= self.burn_in {
-            self.samples.push(self.current_x);
-        }
-        
-        // Increment step counter
-        self.current_step += 1;
-        
-        // Return whether we've reached the desired number of samples
-        self.current_step < (self.num_samples + self.burn_in)
-    }
-    
-    // Run multiple steps at once (for better performance)
-    #[wasm_bindgen]
-    pub fn run_steps(&mut self, num_steps: usize) -> bool {
-        let mut more_steps = true;
-        for _ in 0..num_steps {
-            more_steps = self.step();
-            if !more_steps {
-                break;
+    pub fn step(&mut self) -> Result<bool, String> {
+        if let Some(trace) = &self.trace {
+            let mu1 = trace.get_choice(&"mu1".to_string()).value.expect_float();
+            let mu2 = trace.get_choice(&"mu2".to_string()).value.expect_float();
+            
+            let (new_trace, accepted) = mh(
+                self.program.clone(),
+                trace.clone(),
+                self.selection.clone()
+            )?;
+            
+            // Record the step
+            self.steps.push(Step {
+                mu1,
+                mu2,
+                accepted,
+            });
+            
+            if accepted {
+                self.accepted_count += 1;
             }
+            
+            self.current_step += 1;
+            self.trace = Some(new_trace);
+            Ok(accepted)
+        } else {
+            Err("Simulator not initialized".to_string())
         }
-        more_steps
     }
     
-    // Get the current state
+    #[wasm_bindgen]
+    pub fn get_current_x(&self) -> Result<f64, String> {
+        if let Some(trace) = &self.trace {
+            let mu1 = trace.get_choice(&"mu1".to_string()).value.expect_float();
+            let mu2 = trace.get_choice(&"mu2".to_string()).value.expect_float();
+            Ok((mu1 + mu2) / 2.0) // Return average of parameters as current x
+        } else {
+            Err("Simulator not initialized".to_string())
+        }
+    }
+    
+    #[wasm_bindgen]
+    pub fn get_parameters(&self) -> Result<Float64Array, String> {
+        if let Some(trace) = &self.trace {
+            let mu1 = trace.get_choice(&"mu1".to_string()).value.expect_float();
+            let mu2 = trace.get_choice(&"mu2".to_string()).value.expect_float();
+            
+            let result = Float64Array::new_with_length(2);
+            result.set_index(0, mu1);
+            result.set_index(1, mu2);
+            Ok(result)
+        } else {
+            Err("Simulator not initialized".to_string())
+        }
+    }
+    
     #[wasm_bindgen]
     pub fn get_state_json(&self) -> String {
         let acceptance_ratio = if self.current_step > 0 {
@@ -225,11 +191,23 @@ impl MetropolisHastings {
             0.0
         };
         
+        let (mu1, mu2) = if let Some(trace) = &self.trace {
+            (
+                trace.get_choice(&"mu1".to_string()).value.clone().expect_float(),
+                trace.get_choice(&"mu2".to_string()).value.clone().expect_float()
+            )
+        } else {
+            (0.0, 0.0)
+        };
+        
         let state = SimulationState {
-            current_x: self.current_x,
-            proposed_x: self.proposed_x.unwrap_or(self.current_x),
+            mu1,
+            mu2,
             acceptance_ratio,
-            samples: self.samples.clone(),
+            samples: Samples {
+                mu1: self.steps.iter().map(|s| s.mu1).collect(),
+                mu2: self.steps.iter().map(|s| s.mu2).collect(),
+            },
             steps: self.steps.clone(),
             distribution: self.generate_distribution_data(),
             histogram: self.generate_histogram_data(),
@@ -238,97 +216,109 @@ impl MetropolisHastings {
         serde_json::to_string(&state).unwrap_or_else(|_| "{}".to_string())
     }
     
-    // Generate the target distribution data for plotting
+    // Reuse existing helper methods from MetropolisHastings
     fn generate_distribution_data(&self) -> Vec<Distribution> {
-        let min = self.mean1.min(self.mean2) - 4.0 * self.variance1.sqrt().max(self.variance2.sqrt());
-        let max = self.mean1.max(self.mean2) + 4.0 * self.variance1.sqrt().max(self.variance2.sqrt());
+        let min = -4.0;
+        let max = 4.0;
         let step = (max - min) / 100.0;
         
         let mut points = Vec::new();
         let mut x = min;
         
         while x <= max {
-            points.push(Distribution {
-                x,
-                pdf: self.target_pdf(x),
-            });
+            let pdf = self.target_pdf(x);
+            points.push(Distribution { x, pdf });
             x += step;
         }
         
         points
     }
     
-    // Generate histogram data from the samples
     fn generate_histogram_data(&self) -> Vec<HistogramBin> {
-        if self.samples.is_empty() {
+        if self.steps.is_empty() {
             return Vec::new();
         }
         
-        // Find min and max values
-        let min = self.samples.iter().fold(f64::INFINITY, |a, &b| a.min(b)) - 0.5;
-        let max = self.samples.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)) + 0.5;
+        let min = self.steps.iter().fold(f64::INFINITY, |a, b| a.min(b.mu1).min(b.mu2)) - 0.5;
+        let max = self.steps.iter().fold(f64::NEG_INFINITY, |a, b| a.max(b.mu1).max(b.mu2)) + 0.5;
+        let range = max - min;
+        let num_bins = 20;
+        let bin_width = range / num_bins as f64;
         
-        // Create bins
-        let bin_count = (self.samples.len() as f64).sqrt().ceil().min(30.0) as usize;
-        let bin_width = (max - min) / bin_count as f64;
+        let mut bins = vec![0.0; num_bins];
+        let mut total = 0.0;
         
-        let mut bins = vec![0; bin_count];
-        
-        // Count samples in each bin
-        for &sample in &self.samples {
-            let bin_idx = ((sample - min) / bin_width).floor() as usize;
-            if bin_idx < bin_count {
-                bins[bin_idx] += 1;
+        for step in self.steps.iter() {
+            let bin_index = ((step.mu1 - min) / bin_width).floor() as usize;
+            if bin_index < num_bins {
+                bins[bin_index] += 1.0;
+                total += 1.0;
+            }
+            let bin_index = ((step.mu2 - min) / bin_width).floor() as usize;
+            if bin_index < num_bins {
+                bins[bin_index] += 1.0;
+                total += 1.0;
             }
         }
         
-        // Convert to frequency
-        let total_samples = self.samples.len() as f64;
-        let mut histogram = Vec::new();
-        
-        for (i, &count) in bins.iter().enumerate() {
+        bins.iter().enumerate().map(|(i, &count)| {
             let x = min + (i as f64 + 0.5) * bin_width;
-            let frequency = count as f64 / (total_samples * bin_width);
-            
-            histogram.push(HistogramBin { x, frequency });
-        }
-        
-        histogram
+            let frequency = count / total;
+            HistogramBin { x, frequency }
+        }).collect()
     }
     
-    // Get sample statistics
+    fn target_pdf(&self, x: f64) -> f64 {
+        if let Some(trace) = &self.trace {
+            let mu1 = trace.get_choice(&"mu1".to_string()).value.expect_float();
+            let mu2 = trace.get_choice(&"mu2".to_string()).value.expect_float();
+            let gaussian1 = self.gaussian_pdf(x, mu1, 1.0);
+            let gaussian2 = self.gaussian_pdf(x, mu2, 1.0);
+            0.5 * gaussian1 + 0.5 * gaussian2
+        } else {
+            0.0
+        }
+    }
+    
+    fn gaussian_pdf(&self, x: f64, mean: f64, variance: f64) -> f64 {
+        let exponent = -0.5 * (x - mean).powi(2) / variance;
+        (1.0 / (2.0 * PI * variance).sqrt()) * exponent.exp()
+    }
+    
+    #[wasm_bindgen]
+    pub fn reset(&mut self) {
+        self.current_step = 0;
+        self.accepted_count = 0;
+        self.steps.clear();
+        self.trace = None;
+    }
+    
     #[wasm_bindgen]
     pub fn get_sample_mean(&self) -> f64 {
-        if self.samples.is_empty() {
-            return f64::NAN;
+        if self.steps.is_empty() {
+            return 0.0;
         }
-        
-        let sum: f64 = self.samples.iter().sum();
-        sum / self.samples.len() as f64
+        self.steps.iter().fold(0.0, |sum, step| sum + step.mu1) / self.steps.len() as f64
     }
     
     #[wasm_bindgen]
     pub fn get_sample_variance(&self) -> f64 {
-        if self.samples.len() <= 1 {
-            return f64::NAN;
+        if self.steps.len() < 2 {
+            return 0.0;
         }
-        
         let mean = self.get_sample_mean();
-        let sum_sq_diff: f64 = self.samples.iter()
-            .map(|&x| (x - mean).powi(2))
-            .sum();
-            
-        sum_sq_diff / (self.samples.len() - 1) as f64
+        self.steps.iter()
+            .map(|step| (step.mu1 - mean).powi(2))
+            .sum::<f64>() / (self.steps.len() - 1) as f64
     }
     
-    // Get arrays for JavaScript
     #[wasm_bindgen]
     pub fn get_samples(&self) -> Float64Array {
-        let array = Float64Array::new_with_length(self.samples.len() as u32);
-        for (i, &sample) in self.samples.iter().enumerate() {
-            array.set_index(i as u32, sample);
+        let result = Float64Array::new_with_length(self.steps.len() as u32);
+        for (i, step) in self.steps.iter().enumerate() {
+            result.set_index(i as u32, step.mu1);
         }
-        array
+        result
     }
     
     #[wasm_bindgen]
@@ -338,88 +328,39 @@ impl MetropolisHastings {
     
     #[wasm_bindgen]
     pub fn get_samples_count(&self) -> usize {
-        self.samples.len()
+        self.steps.len()
     }
     
     #[wasm_bindgen]
     pub fn get_acceptance_ratio(&self) -> f64 {
-        if self.current_step > 0 {
-            self.accepted_count as f64 / self.current_step as f64
-        } else {
-            0.0
+        if self.current_step == 0 {
+            return 0.0;
         }
+        self.accepted_count as f64 / self.current_step as f64
     }
-    
-    // Get component-specific means
-    #[wasm_bindgen]
-    pub fn get_component_means(&self) -> Float64Array {
-        if self.samples.is_empty() {
-            let array = Float64Array::new_with_length(2);
-            array.set_index(0, f64::NAN);
-            array.set_index(1, f64::NAN);
-            return array;
-        }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simulator() {
+        let model = r#"
+        (
+            (sample mu1 (normal 0.0 1.0))
+            (sample mu2 (normal 0.0 1.0))
+            (constrain (< mu1 mu2))
+            (define p 0.5)
+            (define mix (mixture (list (normal mu1 1.0) (normal mu2 1.0)) (list p (- 1.0 p))))
+            (define observe-point (lambda (x) (observe (gensym) mix x)))
+            (for-each observe-point data)
+        )
+        "#;
+        let mut simulator = Simulator::new(model).unwrap();
+        let data = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+        simulator.initialize(&data).unwrap();
         
-        // Calculate the midpoint between means
-        let midpoint = (self.mean1 + self.mean2) / 2.0;
-        
-        // Split samples into two components
-        let (comp1_samples, comp2_samples): (Vec<f64>, Vec<f64>) = self.samples
-            .iter()
-            .partition(|&&x| x < midpoint);
-        
-        // Calculate means for each component
-        let comp1_mean = if comp1_samples.is_empty() {
-            f64::NAN
-        } else {
-            comp1_samples.iter().sum::<f64>() / comp1_samples.len() as f64
-        };
-        
-        let comp2_mean = if comp2_samples.is_empty() {
-            f64::NAN
-        } else {
-            comp2_samples.iter().sum::<f64>() / comp2_samples.len() as f64
-        };
-        
-        let array = Float64Array::new_with_length(2);
-        array.set_index(0, comp1_mean);
-        array.set_index(1, comp2_mean);
-        array
-    }
-    
-    // Get component-specific samples
-    #[wasm_bindgen]
-    pub fn get_component_samples(&self) -> js_sys::Array {
-        if self.samples.is_empty() {
-            let array = js_sys::Array::new();
-            array.push(&Float64Array::new_with_length(0));
-            array.push(&Float64Array::new_with_length(0));
-            return array;
-        }
-        
-        // Calculate the midpoint between means
-        let midpoint = (self.mean1 + self.mean2) / 2.0;
-        
-        // Split samples into two components
-        let (comp1_samples, comp2_samples): (Vec<f64>, Vec<f64>) = self.samples
-            .iter()
-            .cloned()
-            .partition(|&x| x < midpoint);
-        
-        // Convert to Float64Array
-        let comp1_array = Float64Array::new_with_length(comp1_samples.len() as u32);
-        for (i, &sample) in comp1_samples.iter().enumerate() {
-            comp1_array.set_index(i as u32, sample);
-        }
-        
-        let comp2_array = Float64Array::new_with_length(comp2_samples.len() as u32);
-        for (i, &sample) in comp2_samples.iter().enumerate() {
-            comp2_array.set_index(i as u32, sample);
-        }
-        
-        let array = js_sys::Array::new();
-        array.push(&comp1_array);
-        array.push(&comp2_array);
-        array
     }
 }

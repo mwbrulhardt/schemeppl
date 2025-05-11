@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 
 interface Parameters {
   mean1: number;
@@ -29,7 +29,39 @@ export default function Controls({
   onPause,
   onReset
 }: ControlsProps) {
+  // Local state for input values
+  const [inputValues, setInputValues] = useState<Record<keyof Parameters, string>>({
+    mean1: parameters.mean1.toString(),
+    mean2: parameters.mean2.toString(),
+    variance1: parameters.variance1.toString(),
+    variance2: parameters.variance2.toString(),
+    mixtureWeight: parameters.mixtureWeight.toString(),
+    proposalStdDev: parameters.proposalStdDev.toString(),
+    numSamples: parameters.numSamples.toString(),
+    burnIn: parameters.burnIn.toString(),
+    delay: parameters.delay.toString()
+  });
+
+  // Update local state when parameters change
+  useEffect(() => {
+    setInputValues({
+      mean1: parameters.mean1.toString(),
+      mean2: parameters.mean2.toString(),
+      variance1: parameters.variance1.toString(),
+      variance2: parameters.variance2.toString(),
+      mixtureWeight: parameters.mixtureWeight.toString(),
+      proposalStdDev: parameters.proposalStdDev.toString(),
+      numSamples: parameters.numSamples.toString(),
+      burnIn: parameters.burnIn.toString(),
+      delay: parameters.delay.toString()
+    });
+  }, [parameters]);
+
   const handleParameterChange = useCallback((key: keyof Parameters, value: string) => {
+    // Update local state immediately
+    setInputValues(prev => ({ ...prev, [key]: value }));
+    
+    // Only update parent state if we have a valid number
     const numValue = parseFloat(value);
     if (!isNaN(numValue)) {
       onUpdateParameters({ [key]: numValue });
@@ -44,7 +76,7 @@ export default function Controls({
           <label className="block text-sm font-medium mb-1">Component 1 Mean</label>
           <input
             type="number"
-            value={parameters.mean1}
+            value={inputValues.mean1}
             onChange={(e) => handleParameterChange('mean1', e.target.value)}
             step="0.1"
             className="w-full p-2 border rounded"
@@ -54,7 +86,7 @@ export default function Controls({
           <label className="block text-sm font-medium mb-1">Component 2 Mean</label>
           <input
             type="number"
-            value={parameters.mean2}
+            value={inputValues.mean2}
             onChange={(e) => handleParameterChange('mean2', e.target.value)}
             step="0.1"
             className="w-full p-2 border rounded"
@@ -64,7 +96,7 @@ export default function Controls({
           <label className="block text-sm font-medium mb-1">Component 1 Variance</label>
           <input
             type="number"
-            value={parameters.variance1}
+            value={inputValues.variance1}
             onChange={(e) => handleParameterChange('variance1', e.target.value)}
             min="0.1"
             step="0.1"
@@ -75,7 +107,7 @@ export default function Controls({
           <label className="block text-sm font-medium mb-1">Component 2 Variance</label>
           <input
             type="number"
-            value={parameters.variance2}
+            value={inputValues.variance2}
             onChange={(e) => handleParameterChange('variance2', e.target.value)}
             min="0.1"
             step="0.1"
@@ -86,7 +118,7 @@ export default function Controls({
           <label className="block text-sm font-medium mb-1">Mixture Weight (π)</label>
           <input
             type="number"
-            value={parameters.mixtureWeight}
+            value={inputValues.mixtureWeight}
             onChange={(e) => handleParameterChange('mixtureWeight', e.target.value)}
             min="0.1"
             max="0.9"
@@ -98,7 +130,7 @@ export default function Controls({
           <label className="block text-sm font-medium mb-1">Proposal StdDev</label>
           <input
             type="number"
-            value={parameters.proposalStdDev}
+            value={inputValues.proposalStdDev}
             onChange={(e) => handleParameterChange('proposalStdDev', e.target.value)}
             min="0.1"
             step="0.1"
@@ -109,7 +141,7 @@ export default function Controls({
           <label className="block text-sm font-medium mb-1">Number of Samples</label>
           <input
             type="number"
-            value={parameters.numSamples}
+            value={inputValues.numSamples}
             onChange={(e) => handleParameterChange('numSamples', e.target.value)}
             min="100"
             step="100"
@@ -120,7 +152,7 @@ export default function Controls({
           <label className="block text-sm font-medium mb-1">Burn-in Period</label>
           <input
             type="number"
-            value={parameters.burnIn}
+            value={inputValues.burnIn}
             onChange={(e) => handleParameterChange('burnIn', e.target.value)}
             min="0"
             step="10"
