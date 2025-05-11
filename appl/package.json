@@ -3,8 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "build:wasm": "cd wasm && wasm-pack build --target web --out-dir ../src/pkg",
     "dev": "next dev --turbopack",
-    "build": "next build",
+    "build": "yarn build:wasm && next build",
     "start": "next start",
     "lint": "next lint"
   },
