@@ -40,16 +40,17 @@ jobs:
         run: yarn global add vercel@latest
 
       - name: Pull Vercel environment info
+        working-directory: appl
         run: |
           vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
-          working-directory: appl
 
       - name: Build output for Vercel
+        working-directory: appl
         run: |
           vercel build --token=${{ secrets.VERCEL_TOKEN }}
-          working-directory: appl
 
       - name: Deploy to Vercel (Preview or Production)
+        working-directory: appl
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
             vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
