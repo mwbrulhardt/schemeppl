@@ -2,7 +2,7 @@ name: Build and Deploy to Vercel
 
 on:
   push:
-    branches: [main]
+    branches: [main]  # Change if your default branch is not 'main'
   pull_request:
 
 jobs:
@@ -28,25 +28,29 @@ jobs:
       - name: Install wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
 
-      - name: Install dependencies
+      - name: Install dependencies (Yarn)
         run: yarn install
         working-directory: appl
 
-      - name: Build WASM andNext.js app
+      - name: Build WASM and Next.js app
         run: yarn build
         working-directory: appl
 
       - name: Install Vercel CLI
-        run: npm install --global vercel@latest
+        run: yarn global add vercel@latest
 
       - name: Pull Vercel environment info
-        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
-        working-directory: appl
+        run: |
+          cd appl
+          vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
-      - name: Build output for Vercel (optional, if not done above)
-        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
-        working-directory: appl
+      - name: Build output for Vercel (optional, since already built above)
+        run: |
+          cd appl
+          vercel build --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Deploy to Vercel
-        run: vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }}
-        working-directory: appl
+        run: |
+          cd appl
+          vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }}
+
