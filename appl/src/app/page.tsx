@@ -1,54 +1,83 @@
 'use client';
-import { useEffect, useState } from "react";
-import init, { add } from "../pkg/wasm";
+
+import { useEffect, useState } from 'react';
+import { Chart, registerables } from 'chart.js';
+import annotationPlugin from 'chartjs-plugin-annotation';
+import Controls from '@/components/Controls';
+import Charts from '@/components/Charts';
+import Stats from '@/components/Stats';
+import AlgorithmDescription from '@/components/AlgorithmDescription';
+import { useMetropolisHastings } from '../hooks/useMetropolisHastings';
+
+// Register Chart.js plugins
+Chart.register(...registerables, annotationPlugin);
 
 export default function Home() {
-  const [result, setResult] = useState<number | null>(null);
-  const [num1, setNum1] = useState<string>("0");
-  const [num2, setNum2] = useState<string>("0");
-  const [isWasmReady, setIsWasmReady] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error] = useState<string | null>(null);
+  
+  const {
+    algorithm,
+    isRunning,
+    start,
+    pause,
+    reset,
+    updateParameters,
+    state,
+    parameters
+  } = useMetropolisHastings();
 
   useEffect(() => {
-    init().then(() => {
-      setIsWasmReady(true);
-    });
-  }, []);
-
-  const handleCalculate = () => {
-    if (isWasmReady) {
-      setResult(add(Number(num1), Number(num2)));
+    if (algorithm) {
+      setIsLoading(false);
     }
-  };
+  }, [algorithm]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-lg">Loading WebAssembly...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 text-red-500">
+        <h2 className="font-bold">Error loading WebAssembly</h2>
+        <p>{error}</p>
+        <p className="mt-2">
+          Please make sure you&apos;ve built the WASM module with{' '}
+          <code className="bg-gray-100 p-1 rounded">wasm-pack build --target web</code>
+          and that you&apos;re running this page from a web server.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div className="p-4">
-      <div className="flex gap-4 items-center">
-        <input
-          type="number"
-          value={num1}
-          onChange={(e) => setNum1(e.target.value)}
-          className="border p-2 rounded"
-        />
-        <span>+</span>
-        <input
-          type="number"
-          value={num2}
-          onChange={(e) => setNum2(e.target.value)}
-          className="border p-2 rounded"
-        />
-        <button
-          onClick={handleCalculate}
-          className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-          disabled={!isWasmReady}
-        >
-          Calculate
-        </button>
-      </div>
-      {result !== null && (
-        <div className="mt-4">
-          Result: {result}
-        </div>
-      )}
-    </div>
+    <main className="max-w-7xl mx-auto p-4">
+      <h1 className="text-3xl font-bold text-center mb-8">
+        Gaussian Mixture Model - Metropolis-Hastings Sampling
+      </h1>
+
+      <Controls
+        parameters={parameters}
+        onUpdateParameters={updateParameters}
+        isRunning={isRunning}
+        onStart={start}
+        onPause={pause}
+        onReset={reset}
+      />
+
+      <Charts state={state} parameters={parameters} />
+
+      <Stats state={state} parameters={parameters} />
+
+      <AlgorithmDescription />
+    </main>
   );
 }

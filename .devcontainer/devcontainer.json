@@ -17,6 +17,7 @@
           "remote.containers.forwardAgent": true
         },
         "extensions": [
+          "rust-lang.rust-analyzer",
           "wayou.vscode-todo-highlight",
           "timonwong.shellcheck",
           "esbenp.prettier-vscode",
