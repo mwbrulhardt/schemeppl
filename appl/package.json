@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "postinstall": "curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh",
     "build:wasm": "cd wasm && wasm-pack build --target web --out-dir ../src/pkg",
     "dev": "next dev --turbopack",
     "build": "yarn build:wasm && next build",
