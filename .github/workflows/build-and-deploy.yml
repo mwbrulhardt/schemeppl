@@ -44,11 +44,6 @@ jobs:
           cd appl
           vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
-      - name: Build output for Vercel (optional, since already built above)
-        run: |
-          cd appl
-          vercel build --token=${{ secrets.VERCEL_TOKEN }}
-
       - name: Deploy to Vercel
         run: |
           cd appl
