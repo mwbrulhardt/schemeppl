@@ -411,18 +411,16 @@ export default function Charts({ state, parameters }: ChartsProps) {
 
     // Update distribution chart
     if (distributionChartRef.current) {
-      // Use a fixed x grid for all curves
-      const xVals = Array.from({ length: 100 }, (_, i) => -4 + (8 * i) / 99);
-      
-      // Update x-axis scale based on means
-      const xMin = Math.min(parameters.mean1, parameters.mean2) - 2;
-      const xMax = Math.max(parameters.mean1, parameters.mean2) + 2;
+      // Use a dynamic x grid for all curves based on the current domain
+      const xMin = Math.min(parameters.mean1, parameters.mean2) - 2.5*Math.sqrt(parameters.variance1);
+      const xMax = Math.max(parameters.mean1, parameters.mean2) + 2.5*Math.sqrt(parameters.variance2);
+      const xVals = Array.from({ length: 100 }, (_, i) => xMin + (xMax - xMin) * i / 99);
       if (distributionChartRef.current?.options?.scales?.x) {
         distributionChartRef.current.options.scales.x.min = xMin;
         distributionChartRef.current.options.scales.x.max = xMax;
       }
 
-      // Target GMM (fixed)
+      // Target GMM (dynamic domain)
       distributionChartRef.current.data.datasets[0].data = xVals.map(x => {
         const p1 = parameters.mixtureWeight * (1 / Math.sqrt(2 * Math.PI * parameters.variance1)) * Math.exp(-0.5 * Math.pow((x - parameters.mean1) / Math.sqrt(parameters.variance1), 2));
         const p2 = (1 - parameters.mixtureWeight) * (1 / Math.sqrt(2 * Math.PI * parameters.variance2)) * Math.exp(-0.5 * Math.pow((x - parameters.mean2) / Math.sqrt(parameters.variance2), 2));
@@ -464,8 +462,10 @@ export default function Charts({ state, parameters }: ChartsProps) {
         .filter(point => point.x >= parameters.burnIn);
       
       // Update y-axis scale based on means
-      const yMin = Math.min(parameters.mean1, parameters.mean2) - 1;
-      const yMax = Math.max(parameters.mean1, parameters.mean2) + 1;
+      const delta1 = 1.5*Math.sqrt(parameters.variance1);
+      const delta2 = 1.5*Math.sqrt(parameters.variance2);
+      const yMin = Math.min(parameters.mean1 - delta1, parameters.mean2 - delta2);
+      const yMax = Math.max(parameters.mean1 + delta1, parameters.mean2 + delta2);
       if (traceChartRef.current?.options?.scales?.y) {
         traceChartRef.current.options.scales.y.min = yMin;
         traceChartRef.current.options.scales.y.max = yMax;
@@ -517,8 +517,9 @@ export default function Charts({ state, parameters }: ChartsProps) {
 
       // Update y-axis scale for component 1
       if (component1TraceChartRef.current?.options?.scales?.y) {
-        component1TraceChartRef.current.options.scales.y.min = parameters.mean1 - 1;
-        component1TraceChartRef.current.options.scales.y.max = parameters.mean1 + 1;
+        const delta = 1.5*Math.sqrt(parameters.variance1);
+        component1TraceChartRef.current.options.scales.y.min = parameters.mean1 - delta;
+        component1TraceChartRef.current.options.scales.y.max = parameters.mean1 + delta;
       }
 
       if (component1TraceChartRef.current.options?.plugins?.annotation) {
@@ -550,8 +551,9 @@ export default function Charts({ state, parameters }: ChartsProps) {
 
       // Update y-axis scale for component 2
       if (component2TraceChartRef.current?.options?.scales?.y) {
-        component2TraceChartRef.current.options.scales.y.min = parameters.mean2 - 1;
-        component2TraceChartRef.current.options.scales.y.max = parameters.mean2 + 1;
+        const delta = 1.5*Math.sqrt(parameters.variance2);
+        component2TraceChartRef.current.options.scales.y.min = parameters.mean2 - delta;
+        component2TraceChartRef.current.options.scales.y.max = parameters.mean2 + delta;
       }
 
       if (component2TraceChartRef.current.options?.plugins?.annotation) {
@@ -578,18 +580,18 @@ export default function Charts({ state, parameters }: ChartsProps) {
   }, [state, parameters]);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-      <div className="bg-white p-4 rounded-lg shadow">
-        <canvas id="distribution-chart" className="h-[350px]"></canvas>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 w-full">
+      <div className="bg-white p-4 rounded-lg shadow w-full">
+        <canvas id="distribution-chart" className="w-full h-[400px]"></canvas>
       </div>
-      <div className="bg-white p-4 rounded-lg shadow">
-        <canvas id="trace-chart" className="h-[350px]"></canvas>
+      <div className="bg-white p-4 rounded-lg shadow w-full">
+        <canvas id="trace-chart" className="w-full h-[400px]"></canvas>
       </div>
-      <div className="bg-white p-4 rounded-lg shadow">
-        <canvas id="component1-trace-chart" className="h-[350px]"></canvas>
+      <div className="bg-white p-4 rounded-lg shadow w-full">
+        <canvas id="component1-trace-chart" className="w-full h-[400px]"></canvas>
       </div>
-      <div className="bg-white p-4 rounded-lg shadow">
-        <canvas id="component2-trace-chart" className="h-[350px]"></canvas>
+      <div className="bg-white p-4 rounded-lg shadow w-full">
+        <canvas id="component2-trace-chart" className="w-full h-[400px]"></canvas>
       </div>
     </div>
   );

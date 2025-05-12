@@ -6,6 +6,7 @@ import annotationPlugin from 'chartjs-plugin-annotation';
 import Controls from '@/components/Controls';
 import Charts from '@/components/Charts';
 import AlgorithmDescription from '@/components/AlgorithmDescription';
+import WalkVisualization from '@/components/WalkVisualization';
 import { useSimulator } from '../hooks/useSimulator';
 
 // Register Chart.js plugins
@@ -62,6 +63,7 @@ export default function Home() {
       <h1 className="text-3xl font-bold text-center mb-8">
         Gaussian Mixture Model - Metropolis-Hastings Sampling
       </h1>
+      <AlgorithmDescription />
 
       <Controls
         parameters={parameters}
@@ -72,11 +74,18 @@ export default function Home() {
         onReset={reset}
       />
 
-      <Charts state={state} parameters={parameters} />
+      <div className="space-y-8 w-full">
 
-      {/*<Stats state={state} parameters={parameters} />*/}
+        {/* Charts in Grid Layout */}{/* Charts in Grid Layout */}
+        <Charts state={state} parameters={parameters} />
+        
+        {/* Walk Visualization (Full Width) */}
+        {state && <WalkVisualization state={state} isRunning={isRunning} parameters={parameters} />}
 
-      <AlgorithmDescription />
+        
+      </div>
+
+      
     </main>
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 
 interface Parameters {
   mean1: number;
@@ -29,7 +29,7 @@ export default function Controls({
   onPause,
   onReset
 }: ControlsProps) {
-  // Local state for input values
+  // Local state for input values and validity
   const [inputValues, setInputValues] = useState<Record<keyof Parameters, string>>({
     mean1: parameters.mean1.toString(),
     mean2: parameters.mean2.toString(),
@@ -41,6 +41,30 @@ export default function Controls({
     burnIn: parameters.burnIn.toString(),
     delay: parameters.delay.toString()
   });
+  const [inputValidity, setInputValidity] = useState<Record<keyof Parameters, boolean>>({
+    mean1: true,
+    mean2: true,
+    variance1: true,
+    variance2: true,
+    mixtureWeight: true,
+    proposalStdDev: true,
+    numSamples: true,
+    burnIn: true,
+    delay: true
+  });
+
+  // Validation rules for each parameter
+  const validators: Record<keyof Parameters, (value: string) => boolean> = {
+    mean1: v => !isNaN(Number(v)),
+    mean2: v => !isNaN(Number(v)),
+    variance1: v => !isNaN(Number(v)) && Number(v) > 0,
+    variance2: v => !isNaN(Number(v)) && Number(v) > 0,
+    mixtureWeight: v => !isNaN(Number(v)) && Number(v) > 0 && Number(v) < 1,
+    proposalStdDev: v => !isNaN(Number(v)) && Number(v) > 0,
+    numSamples: v => !isNaN(Number(v)) && Number(v) >= 100,
+    burnIn: v => !isNaN(Number(v)) && Number(v) >= 0,
+    delay: v => !isNaN(Number(v)) && Number(v) >= 0 && Number(v) <= 1000
+  };
 
   // Update local state when parameters change
   useEffect(() => {
@@ -55,18 +79,31 @@ export default function Controls({
       burnIn: parameters.burnIn.toString(),
       delay: parameters.delay.toString()
     });
+    setInputValidity({
+      mean1: true,
+      mean2: true,
+      variance1: true,
+      variance2: true,
+      mixtureWeight: true,
+      proposalStdDev: true,
+      numSamples: true,
+      burnIn: true,
+      delay: true
+    });
   }, [parameters]);
 
   const handleParameterChange = useCallback((key: keyof Parameters, value: string) => {
-    // Update local state immediately
     setInputValues(prev => ({ ...prev, [key]: value }));
-    
-    // Only update parent state if we have a valid number
-    const numValue = parseFloat(value);
-    if (!isNaN(numValue)) {
-      onUpdateParameters({ [key]: numValue });
+    const isValid = validators[key](value);
+    setInputValidity(prev => ({ ...prev, [key]: isValid }));
+    if (isValid) {
+      onUpdateParameters({ [key]: parseFloat(value) });
     }
   }, [onUpdateParameters]);
+
+  // Helper to get input class
+  const getInputClass = (key: keyof Parameters) =>
+    `w-full p-2 border rounded ${inputValidity[key] ? '' : 'border-red-500 ring-2 ring-red-200'}`;
 
   return (
     <div className="bg-gray-50 p-4 rounded-lg mb-8">
@@ -79,7 +116,8 @@ export default function Controls({
             value={inputValues.mean1}
             onChange={(e) => handleParameterChange('mean1', e.target.value)}
             step="0.1"
-            className="w-full p-2 border rounded"
+            className={getInputClass('mean1')}
+            disabled={isRunning}
           />
         </div>
         <div>
@@ -89,7 +127,8 @@ export default function Controls({
             value={inputValues.mean2}
             onChange={(e) => handleParameterChange('mean2', e.target.value)}
             step="0.1"
-            className="w-full p-2 border rounded"
+            className={getInputClass('mean2')}
+            disabled={isRunning}
           />
         </div>
         <div>
@@ -100,7 +139,8 @@ export default function Controls({
             onChange={(e) => handleParameterChange('variance1', e.target.value)}
             min="0.1"
             step="0.1"
-            className="w-full p-2 border rounded"
+            className={getInputClass('variance1')}
+            disabled={isRunning}
           />
         </div>
         <div>
@@ -111,7 +151,8 @@ export default function Controls({
             onChange={(e) => handleParameterChange('variance2', e.target.value)}
             min="0.1"
             step="0.1"
-            className="w-full p-2 border rounded"
+            className={getInputClass('variance2')}
+            disabled={isRunning}
           />
         </div>
         <div>
@@ -120,11 +161,15 @@ export default function Controls({
             type="number"
             value={inputValues.mixtureWeight}
             onChange={(e) => handleParameterChange('mixtureWeight', e.target.value)}
-            min="0.1"
-            max="0.9"
-            step="0.1"
-            className="w-full p-2 border rounded"
+            min="0.01"
+            max="0.99"
+            step="0.01"
+            className={getInputClass('mixtureWeight')}
+            disabled={isRunning}
           />
+          {!inputValidity.mixtureWeight && (
+            <div className="text-xs text-red-600 mt-1">Enter a value between 0 and 1 (exclusive).</div>
+          )}
         </div>
         <div>
           <label className="block text-sm font-medium mb-1">Proposal StdDev</label>
@@ -134,7 +179,8 @@ export default function Controls({
             onChange={(e) => handleParameterChange('proposalStdDev', e.target.value)}
             min="0.1"
             step="0.1"
-            className="w-full p-2 border rounded"
+            className={getInputClass('proposalStdDev')}
+            disabled={isRunning}
           />
         </div>
         <div>
@@ -145,7 +191,8 @@ export default function Controls({
             onChange={(e) => handleParameterChange('numSamples', e.target.value)}
             min="100"
             step="100"
-            className="w-full p-2 border rounded"
+            className={getInputClass('numSamples')}
+            disabled={isRunning}
           />
         </div>
         <div>
@@ -156,7 +203,8 @@ export default function Controls({
             onChange={(e) => handleParameterChange('burnIn', e.target.value)}
             min="0"
             step="10"
-            className="w-full p-2 border rounded"
+            className={getInputClass('burnIn')}
+            disabled={isRunning}
           />
         </div>
         <div>
@@ -165,12 +213,18 @@ export default function Controls({
           </label>
           <input
             type="range"
-            value={parameters.delay}
+            value={inputValues.delay}
             onChange={(e) => handleParameterChange('delay', e.target.value)}
-            min="1"
-            max="100"
-            className="w-full"
+            min="0"
+            max="1000"
+            step="10"
+            className={getInputClass('delay')}
+            disabled={isRunning}
           />
+          <div className="flex justify-between text-xs text-gray-500 mt-1">
+            <span>Fast (0ms)</span>
+            <span>Slow (1000ms)</span>
+          </div>
         </div>
       </div>
       <div className="mt-4 flex gap-4">

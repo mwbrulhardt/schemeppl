@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import init, { Simulator } from '@/pkg/wasm';
 
-interface Parameters {
+export interface Parameters {
   mean1: number;
   mean2: number;
   variance1: number;
@@ -13,7 +13,7 @@ interface Parameters {
   delay: number;
 }
 
-interface SimulationState {
+export interface SimulationState {
   mu1: number;
   mu2: number;
   acceptance_ratio: number;
@@ -60,8 +60,8 @@ export function useSimulator() {
   const [algorithm, setAlgorithm] = useState<Simulator | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [animationId, setAnimationId] = useState<number | null>(null);
-  const [lastTime, setLastTime] = useState(0);
   const [state, setState] = useState<SimulationState | null>(null);
+  const lastStepTimeRef = useRef<number>(0);
   const [parameters, setParameters] = useState<Parameters>({
     mean1: -2,
     mean2: 2,
@@ -71,7 +71,7 @@ export function useSimulator() {
     proposalStdDev: 1,
     numSamples: 1000,
     burnIn: 100,
-    delay: 10
+    delay: 1000
   });
 
   // Ref to always have the latest isRunning value
@@ -103,22 +103,6 @@ export function useSimulator() {
     }
   }, []);
 
-  // Update parameters and reinitialize simulator
-  const updateParameters = useCallback((newParams: Partial<Parameters>) => {
-    setParameters(prev => {
-      const updated = { ...prev, ...newParams };
-      if (algorithm) {
-        // Always generate new data and reinitialize the sampler
-        const { model, data } = createModelAndData(updated);
-        const algo = new Simulator(model);
-        algo.initialize(data);
-        setAlgorithm(algo);
-        updateState(algo);
-      }
-      return updated;
-    });
-  }, [algorithm, updateState]);
-
   // Pause simulation
   const pause = useCallback(() => {
     setIsRunning(false);
@@ -134,18 +118,22 @@ export function useSimulator() {
       return;
     }
 
-    const elapsed = timestamp - lastTime;
-    if (elapsed > parameters.delay) {
-      setLastTime(timestamp);
+    const elapsed = timestamp - lastStepTimeRef.current;
+    console.log(`Current delay: ${parameters.delay}ms, Elapsed: ${elapsed.toFixed(2)}ms`);
+    
+    if (elapsed >= parameters.delay) {
+      console.log('Taking step - delay reached');
       try {
         algorithm.step();
         const newState = JSON.parse(algorithm.get_state_json());
-        setState(newState);
         
         if (
           newState.samples.mu1.length < parameters.numSamples &&
           isRunningRef.current
         ) {
+          console.log(`Step taken. Total samples: ${newState.samples.mu1.length}`);
+          lastStepTimeRef.current = timestamp;
+          setState(newState);
           const id = requestAnimationFrame(runSimulation);
           setAnimationId(id);
         } else {
@@ -156,11 +144,12 @@ export function useSimulator() {
         console.error('Error in simulation step:', error);
         pause();
       }
-    } else if (isRunningRef.current) {
+    } else {
+      // Always request next frame, even if we haven't reached the delay
       const id = requestAnimationFrame(runSimulation);
       setAnimationId(id);
     }
-  }, [algorithm, lastTime, parameters.delay, parameters.numSamples, pause]);
+  }, [algorithm, parameters.delay, parameters.numSamples, pause]);
 
   // Start simulation
   const start = useCallback(() => {
@@ -168,13 +157,30 @@ export function useSimulator() {
       console.error('Algorithm not initialized');
       return;
     }
-    const now = performance.now();
-    setLastTime(now);
+    console.log(`Starting simulation with delay: ${parameters.delay}ms`);
+    lastStepTimeRef.current = performance.now();
     setIsRunning(true);
-    setTimeout(() => {
-      runSimulation(now);
-    }, 0);
-  }, [algorithm, runSimulation, setIsRunning]);
+    const id = requestAnimationFrame(runSimulation);
+    setAnimationId(id);
+  }, [algorithm, runSimulation, parameters.delay]);
+
+  // Update parameters and reinitialize simulator
+  const updateParameters = useCallback((newParams: Partial<Parameters>) => {
+    setParameters(prev => {
+      const updated = { ...prev, ...newParams };
+      if (algorithm) {
+        console.log('Parameters updated:', updated);
+        lastStepTimeRef.current = performance.now();
+        // Always generate new data and reinitialize the sampler
+        const { model, data } = createModelAndData(updated);
+        const algo = new Simulator(model);
+        algo.initialize(data);
+        setAlgorithm(algo);
+        updateState(algo);
+      }
+      return updated;
+    });
+  }, [algorithm, updateState]);
 
   // Reset simulation
   const reset = useCallback(() => {
