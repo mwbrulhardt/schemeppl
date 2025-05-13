@@ -1,13 +1,12 @@
+use crate::ast::{Procedure, Value};
 use rand::RngCore;
 
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::ast::{HostFn, Procedure, Value};
+use crate::ast::HostFn;
 use crate::distributions::{Condition, DistributionExtended, Mixture};
-
-// TODO: Fix the distribution primitives to be more unified.
 
 /// Make a gensym.
 pub fn make_gensym(args: Vec<Value>) -> Result<Value, String> {
@@ -165,142 +164,337 @@ pub fn display(v: Vec<Value>) -> Result<Value, String> {
     Ok(Value::List(vec![]))
 }
 
-// Distribution primitives
-fn parse_normal_args(args: &[Value]) -> Result<Box<dyn DistributionExtended<f64>>, String> {
-    use statrs::distribution::Normal;
+pub trait Parseable: Sized {
+    fn parse(args: &[Value]) -> Result<Self, String>;
+}
 
-    match args.len() {
-        0 => Ok(Box::new(Normal::new(0.0, 1.0).unwrap())),
-        1 => match &args[0] {
-            Value::Float(f) => Ok(Box::new(Normal::new(*f, 1.0).unwrap())),
-            Value::Integer(i) => Ok(Box::new(Normal::new(*i as f64, 1.0).unwrap())),
-            _ => Err("normal: expected numeric mean".into()),
-        },
-        2 => {
-            let (mean, std) = (&args[0], &args[1]);
-            match (mean, std) {
-                (Value::Float(mean), Value::Float(std)) => {
-                    Ok(Box::new(Normal::new(*mean, *std).unwrap()))
-                }
-                (Value::Integer(mean), Value::Integer(std)) => {
-                    Ok(Box::new(Normal::new(*mean as f64, *std as f64).unwrap()))
-                }
-                _ => Err("normal: expected numeric mean and std".into()),
-            }
+impl Parseable for statrs::distribution::Bernoulli {
+    fn parse(args: &[Value]) -> Result<Self, String> {
+        if args.len() != 1 {
+            return Err(format!("Bernoulli expects 1 argument, got {}", args.len()));
         }
-        _ => Err("normal: expected 0 or 2 arguments".into()),
+
+        let p = args[0]
+            .as_float()
+            .ok_or_else(|| "Bernoulli parameter must be a number".to_string())?;
+
+        if p < 0.0 || p > 1.0 {
+            return Err(format!(
+                "Bernoulli parameter must be between 0 and 1, got {}",
+                p
+            ));
+        }
+
+        statrs::distribution::Bernoulli::new(p)
+            .map_err(|e| format!("Failed to create Bernoulli distribution: {}", e))
     }
 }
 
-pub fn normal_sample(args: Vec<Value>, rng: &mut dyn RngCore) -> Result<Value, String> {
-    let dist = parse_normal_args(&args)?;
-    Ok(Value::Float(dist.sample_dyn(rng)))
-}
+impl Parseable for Condition {
+    fn parse(args: &[Value]) -> Result<Self, String> {
+        if args.len() != 1 {
+            return Err(format!("Condition expects 1 argument, got {}", args.len()));
+        }
 
-pub fn normal_log_prob(args: Vec<Value>, value: Value) -> Result<f64, String> {
-    let dist = parse_normal_args(&args)?;
-    match value {
-        Value::Float(f) => Ok(dist.log_prob(f)),
-        Value::Integer(i) => Ok(dist.log_prob(i as f64)),
-        _ => Err("normal log_prob expects a numeric value".into()),
+        let flag = args[0]
+            .as_bool()
+            .ok_or_else(|| "Condition argument must be a boolean".to_string())?;
+
+        Ok(Condition::new(flag))
     }
 }
 
-fn parse_mixture_args(args: &[Value]) -> Result<Box<dyn DistributionExtended<f64>>, String> {
-    // Args: Vec<Stochastic Procedure> Vec<probabilities>
-    // Expect exactly two arguments: a list of component specs and a list of weights
-    if args.len() != 2 {
-        return Err(
-            "mixture: expected 2 arguments: list of distributions and list of weights".into(),
-        );
+impl Parseable for statrs::distribution::Normal {
+    fn parse(args: &[Value]) -> Result<Self, String> {
+        if args.len() != 2 {
+            return Err(format!("Normal expects 2 arguments, got {}", args.len()));
+        }
+
+        let mean = args[0]
+            .as_float()
+            .ok_or_else(|| "Normal mean must be a number".to_string())?;
+        let std_dev = args[1]
+            .as_float()
+            .ok_or_else(|| "Normal standard deviation must be a number".to_string())?;
+
+        if std_dev <= 0.0 {
+            return Err(format!(
+                "Normal standard deviation must be positive, got {}",
+                std_dev
+            ));
+        }
+
+        statrs::distribution::Normal::new(mean, std_dev)
+            .map_err(|e| format!("Failed to create Normal distribution: {}", e))
     }
-    // First argument: list of component specifications (each itself a list of normal parameters)
-    let dist_specs = match &args[0] {
-        Value::List(v) => v,
-        _ => {
+}
+
+impl Parseable for Mixture<f64> {
+    fn parse(args: &[Value]) -> Result<Self, String> {
+        // Args: Vec<Stochastic Procedure> Vec<probabilities>
+        // Expect exactly two arguments: a list of component specs and a list of weights
+        if args.len() != 2 {
             return Err(
-                "mixture: first argument must be a list of distribution parameter lists".into(),
-            )
+                "mixture: expected 2 arguments: list of distributions and list of weights".into(),
+            );
         }
-    };
-    // Second argument: list of numeric weights
-    let weight_vals = match &args[1] {
-        Value::List(v) => v,
-        _ => return Err("mixture: second argument must be a list of numeric weights".into()),
-    };
-    if dist_specs.len() != weight_vals.len() {
-        return Err("mixture: number of distributions and weights must match".into());
-    }
-    // Convert weights to log-space
-    let mut log_weights = Vec::with_capacity(weight_vals.len());
-    for w in weight_vals {
-        let (wv, _) = get_numeric(w)?;
-        if wv <= 0.0 {
-            return Err("mixture: weights must be positive".into());
-        }
-        log_weights.push(wv.ln());
-    }
-
-    // Build each component by parsing its normal parameters
-    let mut components: Vec<Box<dyn DistributionExtended<f64>>> =
-        Vec::with_capacity(dist_specs.len());
-    for spec in dist_specs {
-        let params = match spec {
-            Value::Procedure(Procedure::Stochastic { args, .. }) => args.clone().unwrap(),
-            _ => return Err("mixture: each component must be a list of parameters".into()),
-        };
-
-        // TODO: Should work for generic distributions
-        let dist = parse_normal_args(&params)?;
-        components.push(dist);
-    }
-    // Return a Mixture distribution over f64
-    Ok(Box::new(Mixture {
-        log_weights,
-        components,
-        _marker: std::marker::PhantomData,
-    }))
-}
-
-pub fn mixture_sample(args: Vec<Value>, rng: &mut dyn RngCore) -> Result<Value, String> {
-    let dist = parse_mixture_args(&args)?;
-    Ok(Value::Float(dist.sample_dyn(rng)))
-}
-
-pub fn mixture_log_prob(args: Vec<Value>, value: Value) -> Result<f64, String> {
-    let dist = parse_mixture_args(&args)?;
-    match value {
-        Value::Float(f) => Ok(dist.log_prob(f)),
-        Value::Integer(i) => Ok(dist.log_prob(i as f64)),
-        _ => Err("mixture log_prob expects a numeric value".into()),
-    }
-}
-
-fn parse_condition_args(args: &[Value]) -> Result<Box<dyn DistributionExtended<bool>>, String> {
-    match args.len() {
-        0 => Ok(Box::new(Condition::new(true))),
-        1 => {
-            let value = &args[0];
-
-            match value {
-                Value::Boolean(flag) => Ok(Box::new(Condition::new(*flag))),
-                _ => Err("condition expects a boolean paramter".into()),
+        // First argument: list of component specifications (each itself a list of normal parameters)
+        let dist_specs = match &args[0] {
+            Value::List(v) => v,
+            _ => {
+                return Err(
+                    "mixture: first argument must be a list of distribution parameter lists".into(),
+                )
             }
+        };
+        // Second argument: list of numeric weights
+        let weight_vals = match &args[1] {
+            Value::List(v) => v,
+            _ => return Err("mixture: second argument must be a list of numeric weights".into()),
+        };
+        if dist_specs.len() != weight_vals.len() {
+            return Err("mixture: number of distributions and weights must match".into());
         }
-        _ => Err("condition only expects 1 parameter".into()),
+        // Convert weights to log-space
+        let mut log_weights = Vec::with_capacity(weight_vals.len());
+        for w in weight_vals {
+            let wv = w
+                .as_float()
+                .ok_or_else(|| "Mixture weights must be a number".to_string())?;
+            if wv <= 0.0 {
+                return Err("mixture: weights must be positive".into());
+            }
+            log_weights.push(wv.ln());
+        }
+
+        // Build each component by parsing its normal parameters
+        let mut components: Vec<Box<dyn DistributionExtended<f64>>> =
+            Vec::with_capacity(dist_specs.len());
+
+        for spec in dist_specs {
+            let dist = match spec {
+                Value::Procedure(Procedure::Stochastic { name, args, .. }) => {
+                    let args = args.clone().unwrap_or_default();
+                    let dist = create_distribution(&name, &args)?;
+                    dist.as_continuous().unwrap().clone_box()
+                }
+                _ => return Err("mixture: each component must be a list of parameters".into()),
+            };
+
+            components.push(dist);
+        }
+        // Return a Mixture distribution over f64
+        Ok(Mixture {
+            log_weights,
+            components,
+            _marker: std::marker::PhantomData,
+        })
     }
 }
 
-pub fn condition_sample(args: Vec<Value>, rng: &mut dyn RngCore) -> Result<Value, String> {
-    let dist = parse_condition_args(&args)?;
-    Ok(Value::Boolean(dist.sample_dyn(rng)))
+/// Enum representing different types of distributions with their appropriate output types
+pub enum ValueDistribution {
+    Continuous(Box<dyn DistributionExtended<f64>>),
+    Discrete(Box<dyn DistributionExtended<bool>>),
 }
 
-pub fn condition_log_prob(args: Vec<Value>, value: Value) -> Result<f64, String> {
-    let dist = parse_condition_args(&args)?;
+impl ValueDistribution {
+    /// Get the distribution as a continuous (f64) distribution if possible
+    pub fn as_continuous(&self) -> Result<&Box<dyn DistributionExtended<f64>>, String> {
+        match self {
+            ValueDistribution::Continuous(dist) => Ok(dist),
+            _ => Err("Not a continuous distribution".to_string()),
+        }
+    }
 
-    match value {
-        Value::Boolean(x) => Ok(dist.log_prob(x)),
-        _ => Err("Invalid input for domain boolean".into()),
+    /// Get the distribution as a discrete (bool) distribution if possible
+    pub fn as_discrete(&self) -> Result<&Box<dyn DistributionExtended<bool>>, String> {
+        match self {
+            ValueDistribution::Discrete(dist) => Ok(dist),
+            _ => Err("Not a discrete distribution".to_string()),
+        }
+    }
+
+    /// Sample from the distribution, returning a Value
+    pub fn sample(&self, rng: &mut dyn RngCore) -> Value {
+        match self {
+            ValueDistribution::Continuous(dist) => Value::Float(dist.sample_dyn(rng)),
+            ValueDistribution::Discrete(dist) => Value::Boolean(dist.sample_dyn(rng)),
+        }
+    }
+
+    /// Compute the log probability of a value
+    pub fn log_prob(&self, value: &Value) -> Result<f64, String> {
+        match (self, value) {
+            (ValueDistribution::Continuous(dist), Value::Float(v)) => Ok(dist.log_prob(*v)),
+            (ValueDistribution::Discrete(dist), Value::Boolean(v)) => Ok(dist.log_prob(*v)),
+            _ => Err(format!(
+                "Type mismatch: {:?} is not compatible with this distribution",
+                value
+            )),
+        }
+    }
+
+    /// Returns true if the distribution is continuous (produces f64 values)
+    pub fn is_continuous(&self) -> bool {
+        matches!(self, ValueDistribution::Continuous(_))
+    }
+
+    /// Returns true if the distribution is discrete (produces bool values)
+    pub fn is_discrete(&self) -> bool {
+        matches!(self, ValueDistribution::Discrete(_))
+    }
+}
+
+/// Creates a distribution of the appropriate type based on the name and arguments
+pub fn create_distribution(name: &str, args: &[Value]) -> Result<ValueDistribution, String> {
+    match name.to_lowercase().as_str() {
+        // Continuous (f64) distributions
+        "normal" | "gaussian" => {
+            let normal = statrs::distribution::Normal::parse(args)?;
+            Ok(ValueDistribution::Continuous(Box::new(normal)))
+        }
+        "mixture" => {
+            let mixture = Mixture::parse(args)?;
+            Ok(ValueDistribution::Continuous(Box::new(mixture)))
+        }
+
+        // Discrete (bool) distributions
+        "bernoulli" => {
+            let bernoulli = statrs::distribution::Bernoulli::parse(args)?;
+            Ok(ValueDistribution::Discrete(Box::new(bernoulli)))
+        }
+        "condition" => {
+            let condition = Condition::parse(args)?;
+            Ok(ValueDistribution::Discrete(Box::new(condition)))
+        }
+
+        // Unknown distribution
+        _ => Err(format!("Unknown distribution: {}", name)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use statrs::statistics::Distribution;
+
+    #[test]
+    fn test_parse() {
+        // Test Bernoulli parsing
+        let bernoulli_args = vec![Value::Float(0.7)];
+        let bernoulli = statrs::distribution::Bernoulli::parse(&bernoulli_args).unwrap();
+        assert_eq!(bernoulli.p(), 0.7);
+
+        // Test Normal parsing
+        let normal_args = vec![Value::Float(2.0), Value::Float(1.5)];
+        let normal = statrs::distribution::Normal::parse(&normal_args).unwrap();
+        assert_eq!(normal.mean().unwrap(), 2.0);
+        assert_eq!(normal.std_dev().unwrap(), 1.5);
+
+        // Test Condition parsing
+        let condition_args = vec![Value::Boolean(true)];
+        let condition = Condition::parse(&condition_args).unwrap();
+        assert_eq!(condition.flag, true);
+    }
+
+    #[test]
+    fn test_create_distribution() {
+        // Test creating a normal distribution (continuous/f64)
+        let normal_args = vec![Value::Float(0.0), Value::Float(1.0)];
+        let normal_dist = create_distribution("normal", &normal_args).unwrap();
+        assert!(normal_dist.as_continuous().is_ok());
+        assert!(normal_dist.as_discrete().is_err());
+        assert!(normal_dist.is_continuous());
+        assert!(!normal_dist.is_discrete());
+
+        // Test creating with case-insensitive name
+        let normal_dist2 = create_distribution("NoRmAl", &normal_args).unwrap();
+        assert!(normal_dist2.as_continuous().is_ok());
+
+        // Test creating with an alias
+        let normal_dist3 = create_distribution("gaussian", &normal_args).unwrap();
+        assert!(normal_dist3.as_continuous().is_ok());
+
+        // Test creating a Bernoulli distribution (discrete/bool)
+        let bernoulli_args = vec![Value::Float(0.7)];
+        let bernoulli_dist = create_distribution("bernoulli", &bernoulli_args).unwrap();
+        assert!(bernoulli_dist.as_discrete().is_ok());
+        assert!(bernoulli_dist.as_continuous().is_err());
+        assert!(!bernoulli_dist.is_continuous());
+        assert!(bernoulli_dist.is_discrete());
+
+        // Test creating a Condition distribution (discrete/bool)
+        let condition_args = vec![Value::Boolean(true)];
+        let condition_dist = create_distribution("condition", &condition_args).unwrap();
+        assert!(condition_dist.as_discrete().is_ok());
+        assert!(condition_dist.as_continuous().is_err());
+
+        // Test error for unknown distribution
+        let result = create_distribution("unknown_dist", &normal_args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_any_distribution_methods() {
+        // Test normal distribution sampling and log_prob
+        let normal_args = vec![Value::Float(0.0), Value::Float(1.0)];
+        let normal_dist = create_distribution("normal", &normal_args).unwrap();
+
+        let mut rng = rand::thread_rng();
+        let sample = normal_dist.sample(&mut rng);
+        assert!(matches!(sample, Value::Float(_)));
+
+        if let Value::Float(_) = sample {
+            let log_prob = normal_dist.log_prob(&sample);
+            assert!(log_prob.is_ok());
+            assert!(log_prob.unwrap().is_finite());
+
+            // Test type mismatch error
+            let log_prob_err = normal_dist.log_prob(&Value::Boolean(true));
+            assert!(log_prob_err.is_err());
+        }
+
+        // Test Bernoulli distribution sampling and log_prob
+        let bernoulli_args = vec![Value::Float(0.7)];
+        let bernoulli_dist = create_distribution("bernoulli", &bernoulli_args).unwrap();
+
+        let sample = bernoulli_dist.sample(&mut rng);
+        assert!(matches!(sample, Value::Boolean(_)));
+
+        if let Value::Boolean(_) = sample {
+            let log_prob = bernoulli_dist.log_prob(&sample);
+            assert!(log_prob.is_ok());
+            assert!(log_prob.unwrap().is_finite());
+
+            // Test type mismatch error
+            let log_prob_err = bernoulli_dist.log_prob(&Value::Float(0.5));
+            assert!(log_prob_err.is_err());
+        }
+    }
+
+    #[test]
+    fn test_create_mixture_distribution() {
+        // Create a Normal distribution as a component
+        let normal_args = vec![Value::Float(0.0), Value::Float(1.0)];
+        let normal_proc = Value::Procedure(Procedure::Stochastic {
+            args: Some(normal_args),
+            name: "normal".to_string(),
+        });
+
+        // Create a second Normal distribution as a component
+        let normal2_args = vec![Value::Float(5.0), Value::Float(2.0)];
+        let normal2_proc = Value::Procedure(Procedure::Stochastic {
+            args: Some(normal2_args),
+            name: "normal".to_string(),
+        });
+
+        // Create the mixture with equal weights
+        let components = vec![normal_proc, normal2_proc];
+        let weights = vec![Value::Float(0.5), Value::Float(0.5)];
+        let mixture_args = vec![Value::List(components), Value::List(weights)];
+
+        let mixture_dist = create_distribution("mixture", &mixture_args).unwrap();
+        assert!(mixture_dist.is_continuous());
     }
 }

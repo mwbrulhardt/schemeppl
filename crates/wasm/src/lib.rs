@@ -1,10 +1,8 @@
-use rand::Rng;
-use rand::prelude::*;
 use wasm_bindgen::prelude::*;
 use serde::{Serialize, Deserialize};
 use js_sys::Float64Array;
 use std::f64::consts::PI;
-use ppl::{GenerativeFunction, Trace, Value, Expression, mh, parse_string};
+use ppl::{GenerativeFunction, Trace, Value, mh, parse_string};
 use std::collections::{HashMap, HashSet};
 
 #[wasm_bindgen]

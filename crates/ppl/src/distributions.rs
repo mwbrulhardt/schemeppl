@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use statrs::distribution::Continuous;
 use statrs::distribution::Discrete;
 
-use rand::distributions::{Distribution, WeightedIndex};
+use rand::distributions::{Distribution as RandDistribution, WeightedIndex};
 use rand::RngCore;
 
 /// Computes log-sum-exp of a slice of f64 values using the "log-sum-exp trick".
@@ -123,7 +123,6 @@ impl<T: Debug + Clone + 'static> DistributionExtendedImpl<T> for Mixture<T> {
 }
 
 #[cfg(test)]
-
 mod tests {
     use super::*;
     use statrs::distribution::Normal;

@@ -1,13 +1,9 @@
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
 
-use rand::RngCore;
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-
-use std::ptr;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
@@ -41,14 +37,12 @@ pub enum Expression {
     },
 }
 
-// <‑‑ drop the auto‑derives
 pub struct Env {
     bindings: RefCell<HashMap<String, Value>>,
     ctr: AtomicUsize,
     parent: Option<Rc<RefCell<Env>>>,
 }
 
-// ---- manual Clone ----
 impl Clone for Env {
     fn clone(&self) -> Self {
         Env {
@@ -134,9 +128,8 @@ pub enum Procedure {
         func: HostFn,
     },
     Stochastic {
+        name: String,
         args: Option<Vec<Value>>,
-        sample: fn(Vec<Value>, &mut dyn RngCore) -> Result<Value, String>,
-        log_prob: fn(Vec<Value>, Value) -> Result<f64, String>,
     },
 }
 
@@ -160,21 +153,8 @@ impl PartialEq for Procedure {
                 },
             ) => p1 == p2 && b1 == b2 && Rc::ptr_eq(e1, e2),
 
-            (
-                Stochastic {
-                    args: a1,
-                    sample: s1,
-                    log_prob: l1,
-                },
-                Stochastic {
-                    args: a2,
-                    sample: s2,
-                    log_prob: l2,
-                },
-            ) => {
-                a1 == a2
-                    && ptr::eq(*s1 as *const (), *s2 as *const ())
-                    && ptr::eq(*l1 as *const (), *l2 as *const ())
+            (Stochastic { name: n1, args: a1 }, Stochastic { name: n2, args: a2 }) => {
+                n1 == n2 && a1 == a2
             }
 
             _ => false,

@@ -10,12 +10,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::ast::{Env, Expression, HostFn, Literal, Procedure, Value};
+use crate::primitives::create_distribution;
 use crate::primitives::*;
 use crate::r#gen;
 use crate::trace::{ChoiceMap, Trace};
-//use crate::parser::gen;
-
-// TODO: Fix the distribution primitives to be more unified.
 
 pub fn eval(
     expr: Expression,
@@ -94,13 +92,13 @@ pub fn eval(
             // Get the stochastic procedure and sample from it
             match dist {
                 Value::Procedure(Procedure::Stochastic {
+                    name: dist_name,
                     args,
-                    sample,
-                    log_prob,
                 }) => {
                     let args = args.unwrap_or_default();
-                    let value = sample(args.clone(), rng)?;
-                    let score = log_prob(args, value.clone())?;
+                    let dist = create_distribution(&dist_name, &args)?;
+                    let value = dist.sample(rng);
+                    let score = dist.log_prob(&value)?;
 
                     // Add to trace
                     trace.add_choice(name.clone(), value.clone(), score);
@@ -131,12 +129,12 @@ pub fn eval(
             // Get the stochastic procedure and compute score
             let score = match dist {
                 Value::Procedure(Procedure::Stochastic {
+                    name: dist_name,
                     args,
-                    sample: _,
-                    log_prob,
                 }) => {
                     let args = args.unwrap_or_default();
-                    log_prob(args, value.clone())?
+                    let dist = create_distribution(&dist_name, &args)?;
+                    dist.log_prob(&value)?
                 }
                 _ => return Err("Observe distribution must yield a distribution".to_string()),
             };
@@ -181,15 +179,12 @@ pub fn apply(
 ) -> Result<Value, String> {
     match func {
         Value::Procedure(Procedure::Deterministic { func }) => func(args),
-        Value::Procedure(Procedure::Stochastic {
-            args: _,
-            sample,
-            log_prob,
-        }) => Ok(Value::Procedure(Procedure::Stochastic {
-            args: Some(args),
-            sample,
-            log_prob,
-        })),
+        Value::Procedure(Procedure::Stochastic { name, args: _ }) => {
+            Ok(Value::Procedure(Procedure::Stochastic {
+                name,
+                args: Some(args),
+            }))
+        }
         Value::Procedure(Procedure::Lambda {
             params,
             body,
@@ -277,27 +272,24 @@ pub fn standard_env() -> Rc<RefCell<Env>> {
     env.borrow_mut().set(
         "normal",
         Value::Procedure(Procedure::Stochastic {
+            name: "normal".to_string(),
             args: None,
-            sample: normal_sample,
-            log_prob: normal_log_prob,
         }),
     );
 
     env.borrow_mut().set(
         "mixture",
         Value::Procedure(Procedure::Stochastic {
+            name: "mixture".to_string(),
             args: None,
-            sample: mixture_sample,
-            log_prob: mixture_log_prob,
         }),
     );
 
     env.borrow_mut().set(
         "condition",
         Value::Procedure(Procedure::Stochastic {
+            name: "condition".to_string(),
             args: None,
-            sample: condition_sample,
-            log_prob: condition_log_prob,
         }),
     );
 
@@ -387,9 +379,14 @@ impl GenerativeFunction {
 
                         let val = constraints[name];
                         let score = match dist {
-                            Value::Procedure(Procedure::Stochastic { args, log_prob, .. }) => {
+                            Value::Procedure(Procedure::Stochastic {
+                                name: dist_name,
+                                args,
+                                ..
+                            }) => {
                                 let args = args.unwrap_or_default();
-                                log_prob(args, Value::Float(val))?
+                                let dist = create_distribution(&dist_name, &args)?;
+                                dist.log_prob(&Value::Float(val))?
                             }
                             _ => {
                                 return Err(
