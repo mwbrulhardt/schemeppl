@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import AlgorithmDescription from '@/components/AlgorithmDescription';
+import Charts from '@/components/Charts';
+import Controls from '@/components/Controls';
+import Statistics from '@/components/Statistics';
+import WalkVisualization from '@/components/WalkVisualization';
 import { Chart, registerables } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
-import Controls from '@/components/Controls';
-import Charts from '@/components/Charts';
-import AlgorithmDescription from '@/components/AlgorithmDescription';
-import WalkVisualization from '@/components/WalkVisualization';
+import { useEffect, useState } from 'react';
 import { useSimulator } from '../hooks/useSimulator';
 
 // Register Chart.js plugins
@@ -73,6 +74,8 @@ export default function Home() {
         onPause={pause}
         onReset={reset}
       />
+
+      <Statistics state={state} />
 
       <div className="space-y-8 w-full">
 

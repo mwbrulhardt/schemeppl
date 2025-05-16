@@ -1,5 +1,5 @@
+import { Parameters, SimulationState } from '@/hooks/useSimulator';
 import { useEffect, useRef } from 'react';
-import { SimulationState, Parameters } from '@/hooks/useSimulator';
 
 interface Point {
   x: number;
@@ -20,10 +20,171 @@ export default function WalkVisualization({ state, isRunning, parameters }: Walk
   const pointsRef = useRef<Point[]>([]);
   const lastStepRef = useRef<{ mu1: number; mu2: number; accepted: boolean } | null>(null);
 
+  // Initialize canvas with proper DPI scaling
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+
+    // Set the canvas size accounting for DPI
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+
+    // Scale the context to match the DPI
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.scale(dpr, dpr);
+    }
+  }, []);
+
+  // Force clear the visualization when state is null or steps are empty (after reset)
+  useEffect(() => {
+    if (!state) {
+      console.log("Force clearing visualization points only - state is null (full reset)");
+      pointsRef.current = [];
+      lastStepRef.current = null;
+      
+      // Redraw canvas with grid but no points
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          drawGridAndAxes(ctx, canvas, parameters);
+        }
+      }
+      return;
+    }
+    
+    if (state.steps.length === 0 && pointsRef.current.length > 0) {
+      console.log("Force clearing visualization points only - steps array is empty");
+      pointsRef.current = [];
+      lastStepRef.current = null;
+      
+      // Redraw canvas with grid but no points
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          drawGridAndAxes(ctx, canvas, parameters);
+        }
+      }
+    }
+  }, [state, parameters]);
+
+  // Helper function to draw grid and axes only (no points)
+  const drawGridAndAxes = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, parameters: Parameters) => {
+    const padding = 40;
+    const width = canvas.width / (window.devicePixelRatio || 1) - 2 * padding;
+    const height = canvas.height / (window.devicePixelRatio || 1) - 2 * padding;
+    const xMin = Math.min(parameters.mu1, parameters.mu2) - 2;
+    const xMax = Math.max(parameters.mu1, parameters.mu2) + 2;
+    const yMin = xMin;
+    const yMax = xMax;
+
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Set up text properties
+    ctx.font = '12px Arial';
+    ctx.fillStyle = '#666';
+    ctx.textAlign = 'center';
+
+    // Draw x-axis
+    ctx.beginPath();
+    ctx.moveTo(padding, canvas.height / (window.devicePixelRatio || 1) - padding);
+    ctx.lineTo(canvas.width / (window.devicePixelRatio || 1) - padding, canvas.height / (window.devicePixelRatio || 1) - padding);
+    ctx.strokeStyle = '#ccc';
+    ctx.stroke();
+
+    // Draw y-axis
+    ctx.beginPath();
+    ctx.moveTo(padding, padding);
+    ctx.lineTo(padding, canvas.height / (window.devicePixelRatio || 1) - padding);
+    ctx.strokeStyle = '#ccc';
+    ctx.stroke();
+
+    // Draw grid lines and labels
+    const numTicks = 5;
+    const xStep = (xMax - xMin) / numTicks;
+    const yStep = (yMax - yMin) / numTicks;
+
+    for (let i = 0; i <= numTicks; i++) {
+      const x = xMin + i * xStep;
+      const y = yMin + i * yStep;
+      
+      // X-axis ticks and labels
+      const xPos = padding + (x - xMin) / (xMax - xMin) * width;
+      ctx.beginPath();
+      ctx.moveTo(xPos, canvas.height / (window.devicePixelRatio || 1) - padding);
+      ctx.lineTo(xPos, canvas.height / (window.devicePixelRatio || 1) - padding + 5);
+      ctx.stroke();
+      ctx.fillText(x.toFixed(1), xPos, canvas.height / (window.devicePixelRatio || 1) - padding + 20);
+
+      // Y-axis ticks and labels
+      const yPos = canvas.height / (window.devicePixelRatio || 1) - padding - (y - yMin) / (yMax - yMin) * height;
+      ctx.beginPath();
+      ctx.moveTo(padding, yPos);
+      ctx.lineTo(padding - 5, yPos);
+      ctx.stroke();
+      ctx.textAlign = 'right';
+      ctx.fillText(y.toFixed(1), padding - 10, yPos + 4);
+      ctx.textAlign = 'center';
+    }
+
+    // Add axis labels
+    ctx.font = '14px Arial';
+    ctx.fillStyle = '#333';
+    
+    // X-axis label (μ₁)
+    ctx.fillText('μ₁', canvas.width / (2 * (window.devicePixelRatio || 1)), canvas.height / (window.devicePixelRatio || 1) - 10);
+    
+    // Y-axis label (μ₂)
+    ctx.save();
+    ctx.translate(20, canvas.height / (2 * (window.devicePixelRatio || 1)));
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('μ₂', 0, 0);
+    ctx.restore();
+  };
+
   // Draw the walk visualization
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !state?.steps?.length) return;
+    if (!canvas) return;
+    
+    // Handle null state
+    if (!state) {
+      console.log("Main drawing effect: state is null, redrawing grid only");
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        drawGridAndAxes(ctx, canvas, parameters);
+      }
+      return;
+    }
+    
+    // Check if steps array is empty but we have points - this means a reset
+    if (state.steps.length === 0 && pointsRef.current.length > 0) {
+      console.log("Clearing walk visualization points after reset");
+      pointsRef.current = [];
+      lastStepRef.current = null;
+      
+      // Draw grid but no points
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        drawGridAndAxes(ctx, canvas, parameters);
+      }
+      return;
+    }
+    
+    if (!state.steps.length) {
+      // Just draw grid if no steps
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        drawGridAndAxes(ctx, canvas, parameters);
+      }
+      return;
+    }
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -32,58 +193,20 @@ export default function WalkVisualization({ state, isRunning, parameters }: Walk
       // Clear canvas
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Set up coordinate system
+      // Draw grid and axes first
+      drawGridAndAxes(ctx, canvas, parameters);
+
+      // Helper function to convert from data coordinates to canvas coordinates
       const padding = 40;
-      const width = canvas.width - 2 * padding;
-      const height = canvas.height - 2 * padding;
-
-      // Calculate domain based on means
-      const xMin = Math.min(parameters.mean1, parameters.mean2) - 2;
-      const xMax = Math.max(parameters.mean1, parameters.mean2) + 2;
-      const yMin = xMin; // Use same range for y-axis
+      const width = canvas.width / (window.devicePixelRatio || 1) - 2 * padding;
+      const height = canvas.height / (window.devicePixelRatio || 1) - 2 * padding;
+      const xMin = Math.min(parameters.mu1, parameters.mu2) - 2;
+      const xMax = Math.max(parameters.mu1, parameters.mu2) + 2;
+      const yMin = xMin;
       const yMax = xMax;
-
-      // Draw axes
-      ctx.beginPath();
-      ctx.strokeStyle = '#ccc';
-      ctx.moveTo(padding, padding);
-      ctx.lineTo(padding, canvas.height - padding);
-      ctx.lineTo(canvas.width - padding, canvas.height - padding);
-      ctx.stroke();
-
-      // Draw grid
-      ctx.strokeStyle = '#eee';
-      const numGridLines = 10;
-      for (let i = 0; i <= numGridLines; i++) {
-        const x = padding + (width * i) / numGridLines;
-        const y = padding + (height * i) / numGridLines;
-        
-        // Vertical lines
-        ctx.beginPath();
-        ctx.moveTo(x, padding);
-        ctx.lineTo(x, canvas.height - padding);
-        ctx.stroke();
-
-        // Horizontal lines
-        ctx.beginPath();
-        ctx.moveTo(padding, y);
-        ctx.lineTo(canvas.width - padding, y);
-        ctx.stroke();
-
-        // Draw axis labels
-        const xValue = xMin + (xMax - xMin) * (i / numGridLines);
-        const yValue = yMin + (yMax - yMin) * (i / numGridLines);
-        
-        // X-axis labels
-        ctx.fillStyle = '#666';
-        ctx.font = '12px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText(xValue.toFixed(1), x, canvas.height - padding + 20);
-        
-        // Y-axis labels
-        ctx.textAlign = 'right';
-        ctx.fillText(yValue.toFixed(1), padding - 5, canvas.height - y);
-      }
+      
+      const toCanvasX = (x: number) => padding + width * (x - xMin) / (xMax - xMin);
+      const toCanvasY = (y: number) => canvas.height / (window.devicePixelRatio || 1) - padding - height * (y - yMin) / (yMax - yMin);
 
       // Update points array if we have a new step
       const lastStep = state.steps[state.steps.length - 1];
@@ -107,10 +230,6 @@ export default function WalkVisualization({ state, isRunning, parameters }: Walk
         
         lastStepRef.current = lastStep;
       }
-
-      // Helper function to convert from data coordinates to canvas coordinates
-      const toCanvasX = (x: number) => padding + width * (x - xMin) / (xMax - xMin);
-      const toCanvasY = (y: number) => canvas.height - padding - height * (y - yMin) / (yMax - yMin);
 
       // Draw points
       pointsRef.current.forEach(point => {
@@ -192,13 +311,15 @@ export default function WalkVisualization({ state, isRunning, parameters }: Walk
   }, [state?.steps, isRunning, parameters]);
 
   return (
-    <div className="w-full">
-      <canvas
-        ref={canvasRef}
-        width={1200}
-        height={600}
-        className="w-full h-auto border border-gray-200 rounded-lg"
-      />
+    <div className="bg-white rounded-lg shadow p-4">
+      <h2 className="text-xl font-semibold mb-4">Parameter Space Walk</h2>
+      <div className="flex justify-center">
+        <canvas
+          ref={canvasRef}
+          style={{ width: '800px', height: '600px' }}
+          className="max-w-full h-auto border border-gray-200 rounded-lg"
+        />
+      </div>
     </div>
   );
 } 

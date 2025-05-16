@@ -10,6 +10,7 @@ js-sys = "0.3.64"
 web-sys = { version = "0.3.64", features = ["console"] }
 rand = { version = "0.8.5", features = ["small_rng"] }
 getrandom = { version = "0.2.10", features = ["js"] }
+statrs = { version = "0.18.0", features = ["rand"] }
 serde = { version = "1.0.188", features = ["derive"] }
 serde_json = "1.0.107"
 

@@ -1,16 +1,5 @@
-import React, { useCallback, useState, useEffect } from 'react';
-
-interface Parameters {
-  mean1: number;
-  mean2: number;
-  variance1: number;
-  variance2: number;
-  mixtureWeight: number;
-  proposalStdDev: number;
-  numSamples: number;
-  burnIn: number;
-  delay: number;
-}
+import { Parameters } from '@/hooks/useSimulator';
+import { useCallback, useEffect, useState } from 'react';
 
 interface ControlsProps {
   parameters: Parameters;
@@ -31,64 +20,69 @@ export default function Controls({
 }: ControlsProps) {
   // Local state for input values and validity
   const [inputValues, setInputValues] = useState<Record<keyof Parameters, string>>({
-    mean1: parameters.mean1.toString(),
-    mean2: parameters.mean2.toString(),
-    variance1: parameters.variance1.toString(),
-    variance2: parameters.variance2.toString(),
-    mixtureWeight: parameters.mixtureWeight.toString(),
+    mu1: parameters.mu1.toString(),
+    mu2: parameters.mu2.toString(),
+    sigma1: parameters.sigma1.toString(),
+    sigma2: parameters.sigma2.toString(),
+    p: parameters.p.toString(),
     proposalStdDev: parameters.proposalStdDev.toString(),
     numSamples: parameters.numSamples.toString(),
     burnIn: parameters.burnIn.toString(),
-    delay: parameters.delay.toString()
+    delay: parameters.delay.toString(),
+    seed: parameters.seed.toString()
   });
   const [inputValidity, setInputValidity] = useState<Record<keyof Parameters, boolean>>({
-    mean1: true,
-    mean2: true,
-    variance1: true,
-    variance2: true,
-    mixtureWeight: true,
+    mu1: true,
+    mu2: true,
+    sigma1: true,
+    sigma2: true,
+    p: true,
     proposalStdDev: true,
     numSamples: true,
     burnIn: true,
-    delay: true
+    delay: true,
+    seed: true
   });
 
   // Validation rules for each parameter
   const validators: Record<keyof Parameters, (value: string) => boolean> = {
-    mean1: v => !isNaN(Number(v)),
-    mean2: v => !isNaN(Number(v)),
-    variance1: v => !isNaN(Number(v)) && Number(v) > 0,
-    variance2: v => !isNaN(Number(v)) && Number(v) > 0,
-    mixtureWeight: v => !isNaN(Number(v)) && Number(v) > 0 && Number(v) < 1,
+    mu1: v => !isNaN(Number(v)),
+    mu2: v => !isNaN(Number(v)),
+    sigma1: v => !isNaN(Number(v)) && Number(v) > 0,
+    sigma2: v => !isNaN(Number(v)) && Number(v) > 0,
+    p: v => !isNaN(Number(v)) && Number(v) > 0 && Number(v) < 1,
     proposalStdDev: v => !isNaN(Number(v)) && Number(v) > 0,
     numSamples: v => !isNaN(Number(v)) && Number(v) >= 100,
     burnIn: v => !isNaN(Number(v)) && Number(v) >= 0,
-    delay: v => !isNaN(Number(v)) && Number(v) >= 0 && Number(v) <= 1000
+    delay: v => !isNaN(Number(v)) && Number(v) >= 0 && Number(v) <= 1000,
+    seed: v => !isNaN(Number(v)) && Number(v) >= 0
   };
 
   // Update local state when parameters change
   useEffect(() => {
     setInputValues({
-      mean1: parameters.mean1.toString(),
-      mean2: parameters.mean2.toString(),
-      variance1: parameters.variance1.toString(),
-      variance2: parameters.variance2.toString(),
-      mixtureWeight: parameters.mixtureWeight.toString(),
+      mu1: parameters.mu1.toString(),
+      mu2: parameters.mu2.toString(),
+      sigma1: parameters.sigma1.toString(),
+      sigma2: parameters.sigma2.toString(),
+      p: parameters.p.toString(),
       proposalStdDev: parameters.proposalStdDev.toString(),
       numSamples: parameters.numSamples.toString(),
       burnIn: parameters.burnIn.toString(),
-      delay: parameters.delay.toString()
+      delay: parameters.delay.toString(),
+      seed: parameters.seed.toString()
     });
     setInputValidity({
-      mean1: true,
-      mean2: true,
-      variance1: true,
-      variance2: true,
-      mixtureWeight: true,
+      mu1: true,
+      mu2: true,
+      sigma1: true,
+      sigma2: true,
+      p: true,
       proposalStdDev: true,
       numSamples: true,
       burnIn: true,
-      delay: true
+      delay: true,
+      seed: true
     });
   }, [parameters]);
 
@@ -99,6 +93,19 @@ export default function Controls({
     if (isValid) {
       onUpdateParameters({ [key]: parseFloat(value) });
     }
+  }, [onUpdateParameters]);
+
+  // Add a separate handler for the delay slider 
+  const handleDelayChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setInputValues(prev => ({ ...prev, delay: value }));
+    
+    // The delay value is always valid based on the slider constraints
+    const numericValue = parseFloat(value);
+    console.log(`Slider changed to: ${numericValue}ms`);
+    
+    // Update the parameter immediately
+    onUpdateParameters({ delay: numericValue });
   }, [onUpdateParameters]);
 
   // Helper to get input class
@@ -113,10 +120,10 @@ export default function Controls({
           <label className="block text-sm font-medium mb-1">Component 1 Mean</label>
           <input
             type="number"
-            value={inputValues.mean1}
-            onChange={(e) => handleParameterChange('mean1', e.target.value)}
+            value={inputValues.mu1}
+            onChange={(e) => handleParameterChange('mu1', e.target.value)}
             step="0.1"
-            className={getInputClass('mean1')}
+            className={getInputClass('mu1')}
             disabled={isRunning}
           />
         </div>
@@ -124,10 +131,10 @@ export default function Controls({
           <label className="block text-sm font-medium mb-1">Component 2 Mean</label>
           <input
             type="number"
-            value={inputValues.mean2}
-            onChange={(e) => handleParameterChange('mean2', e.target.value)}
+            value={inputValues.mu2}
+            onChange={(e) => handleParameterChange('mu2', e.target.value)}
             step="0.1"
-            className={getInputClass('mean2')}
+            className={getInputClass('mu2')}
             disabled={isRunning}
           />
         </div>
@@ -135,11 +142,11 @@ export default function Controls({
           <label className="block text-sm font-medium mb-1">Component 1 Variance</label>
           <input
             type="number"
-            value={inputValues.variance1}
-            onChange={(e) => handleParameterChange('variance1', e.target.value)}
+            value={inputValues.sigma1}
+            onChange={(e) => handleParameterChange('sigma1', e.target.value)}
             min="0.1"
             step="0.1"
-            className={getInputClass('variance1')}
+            className={getInputClass('sigma1')}
             disabled={isRunning}
           />
         </div>
@@ -147,11 +154,11 @@ export default function Controls({
           <label className="block text-sm font-medium mb-1">Component 2 Variance</label>
           <input
             type="number"
-            value={inputValues.variance2}
-            onChange={(e) => handleParameterChange('variance2', e.target.value)}
+            value={inputValues.sigma2}
+            onChange={(e) => handleParameterChange('sigma2', e.target.value)}
             min="0.1"
             step="0.1"
-            className={getInputClass('variance2')}
+            className={getInputClass('sigma2')}
             disabled={isRunning}
           />
         </div>
@@ -159,15 +166,15 @@ export default function Controls({
           <label className="block text-sm font-medium mb-1">Mixture Weight (π)</label>
           <input
             type="number"
-            value={inputValues.mixtureWeight}
-            onChange={(e) => handleParameterChange('mixtureWeight', e.target.value)}
+            value={inputValues.p}
+            onChange={(e) => handleParameterChange('p', e.target.value)}
             min="0.01"
             max="0.99"
             step="0.01"
-            className={getInputClass('mixtureWeight')}
+            className={getInputClass('p')}
             disabled={isRunning}
           />
-          {!inputValidity.mixtureWeight && (
+          {!inputValidity.p && (
             <div className="text-xs text-red-600 mt-1">Enter a value between 0 and 1 (exclusive).</div>
           )}
         </div>
@@ -184,7 +191,9 @@ export default function Controls({
           />
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1">Number of Samples</label>
+          <label className="block text-sm font-medium mb-1">
+            Number of Samples
+          </label>
           <input
             type="number"
             value={inputValues.numSamples}
@@ -196,7 +205,9 @@ export default function Controls({
           />
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1">Burn-in Period</label>
+          <label className="block text-sm font-medium mb-1">
+            Burn-in Period
+          </label>
           <input
             type="number"
             value={inputValues.burnIn}
@@ -214,12 +225,11 @@ export default function Controls({
           <input
             type="range"
             value={inputValues.delay}
-            onChange={(e) => handleParameterChange('delay', e.target.value)}
+            onChange={handleDelayChange}
             min="0"
             max="1000"
             step="10"
-            className={getInputClass('delay')}
-            disabled={isRunning}
+            className={`${getInputClass('delay')} ${isRunning ? 'bg-green-50' : ''}`}
           />
           <div className="flex justify-between text-xs text-gray-500 mt-1">
             <span>Fast (0ms)</span>

@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { Parameters } from '@/hooks/useSimulator';
 import { Chart, registerables } from 'chart.js';
 import annotationPlugin, { AnnotationOptions, AnnotationTypeRegistry } from 'chartjs-plugin-annotation';
+import { useEffect, useRef } from 'react';
 
 Chart.register(...registerables, annotationPlugin);
 
@@ -8,17 +9,7 @@ type AnnotationConfig = {
   [key: string]: AnnotationOptions<keyof AnnotationTypeRegistry>;
 };
 
-interface Parameters {
-  mean1: number;
-  mean2: number;
-  variance1: number;
-  variance2: number;
-  mixtureWeight: number;
-  proposalStdDev: number;
-  numSamples: number;
-  burnIn: number;
-  delay: number;
-}
+
 
 interface SimulationState {
   mu1: number;
@@ -253,8 +244,8 @@ export default function Charts({ state, parameters }: ChartsProps) {
                 display: true,
                 text: 'Value'
               },
-              min: parameters.mean1 - 0.5,
-              max: parameters.mean1 + 0.5
+              min: parameters.mu1 - 0.5,
+              max: parameters.mu1 + 0.5
             }
           },
           animation: false
@@ -307,8 +298,8 @@ export default function Charts({ state, parameters }: ChartsProps) {
                 display: true,
                 text: 'Value'
               },
-              min: parameters.mean2 - 0.5,
-              max: parameters.mean2 + 0.5
+              min: parameters.mu2 - 0.5,
+              max: parameters.mu2 + 0.5
             }
           },
           animation: false
@@ -403,7 +394,7 @@ export default function Charts({ state, parameters }: ChartsProps) {
         }
       });
     }
-  }, [parameters.mean1, parameters.mean2, state]);
+  }, [parameters.mu1, parameters.mu2, state]);
 
   // Update charts when state or parameters change
   useEffect(() => {
@@ -412,8 +403,8 @@ export default function Charts({ state, parameters }: ChartsProps) {
     // Update distribution chart
     if (distributionChartRef.current) {
       // Use a dynamic x grid for all curves based on the current domain
-      const xMin = Math.min(parameters.mean1, parameters.mean2) - 2.5*Math.sqrt(parameters.variance1);
-      const xMax = Math.max(parameters.mean1, parameters.mean2) + 2.5*Math.sqrt(parameters.variance2);
+      const xMin = Math.min(parameters.mu1, parameters.mu2) - 2.5*parameters.sigma1;
+      const xMax = Math.max(parameters.mu1, parameters.mu2) + 2.5*parameters.sigma2;
       const xVals = Array.from({ length: 100 }, (_, i) => xMin + (xMax - xMin) * i / 99);
       if (distributionChartRef.current?.options?.scales?.x) {
         distributionChartRef.current.options.scales.x.min = xMin;
@@ -422,8 +413,8 @@ export default function Charts({ state, parameters }: ChartsProps) {
 
       // Target GMM (dynamic domain)
       distributionChartRef.current.data.datasets[0].data = xVals.map(x => {
-        const p1 = parameters.mixtureWeight * (1 / Math.sqrt(2 * Math.PI * parameters.variance1)) * Math.exp(-0.5 * Math.pow((x - parameters.mean1) / Math.sqrt(parameters.variance1), 2));
-        const p2 = (1 - parameters.mixtureWeight) * (1 / Math.sqrt(2 * Math.PI * parameters.variance2)) * Math.exp(-0.5 * Math.pow((x - parameters.mean2) / Math.sqrt(parameters.variance2), 2));
+        const p1 = parameters.p * (1 / Math.sqrt(2 * Math.PI * parameters.sigma1)) * Math.exp(-0.5 * Math.pow((x - parameters.mu1) / Math.sqrt(parameters.sigma1), 2));
+        const p2 = (1 - parameters.p) * (1 / Math.sqrt(2 * Math.PI * parameters.sigma2)) * Math.exp(-0.5 * Math.pow((x - parameters.mu2) / Math.sqrt(parameters.sigma2), 2));
         return { x, y: p1 + p2 };
       });
 
@@ -455,17 +446,15 @@ export default function Charts({ state, parameters }: ChartsProps) {
     // Update trace charts
     if (traceChartRef.current) {
       const mu1Samples = state.samples.mu1
-        .map((value, index) => ({ x: index, y: value }))
-        .filter(point => point.x >= parameters.burnIn);
+        .map((value, index) => ({ x: index, y: value }));
       const mu2Samples = state.samples.mu2
-        .map((value, index) => ({ x: index, y: value }))
-        .filter(point => point.x >= parameters.burnIn);
+        .map((value, index) => ({ x: index, y: value }));
       
       // Update y-axis scale based on means
-      const delta1 = 1.5*Math.sqrt(parameters.variance1);
-      const delta2 = 1.5*Math.sqrt(parameters.variance2);
-      const yMin = Math.min(parameters.mean1 - delta1, parameters.mean2 - delta2);
-      const yMax = Math.max(parameters.mean1 + delta1, parameters.mean2 + delta2);
+      const delta1 = 1.5*parameters.sigma1;
+      const delta2 = 1.5*parameters.sigma2;
+      const yMin = Math.min(parameters.mu1 - delta1, parameters.mu2 - delta2);
+      const yMax = Math.max(parameters.mu1 + delta1, parameters.mu2 + delta2);
       if (traceChartRef.current?.options?.scales?.y) {
         traceChartRef.current.options.scales.y.min = yMin;
         traceChartRef.current.options.scales.y.max = yMax;
@@ -476,30 +465,18 @@ export default function Charts({ state, parameters }: ChartsProps) {
       
       if (traceChartRef.current?.options?.plugins?.annotation) {
         traceChartRef.current.options.plugins.annotation.annotations = {
-          burnIn: {
-            type: 'box',
-            xMin: 0,
-            xMax: parameters.burnIn,
-            backgroundColor: 'rgba(200,200,200,0.15)',
-            borderWidth: 0,
-            label: {
-              content: 'Burn-in',
-              position: 'start',
-              color: '#888'
-            }
-          },
           mean1Line: {
             type: 'line',
-            yMin: parameters.mean1,
-            yMax: parameters.mean1,
+            yMin: parameters.mu1,
+            yMax: parameters.mu1,
             borderColor: 'green',
             borderWidth: 2,
             borderDash: [5, 5]
           },
           mean2Line: {
             type: 'line',
-            yMin: parameters.mean2,
-            yMax: parameters.mean2,
+            yMin: parameters.mu2,
+            yMax: parameters.mu2,
             borderColor: 'orange',
             borderWidth: 2,
             borderDash: [5, 5]
@@ -512,29 +489,21 @@ export default function Charts({ state, parameters }: ChartsProps) {
     // Update component trace charts
     if (component1TraceChartRef.current) {
       component1TraceChartRef.current.data.datasets[0].data = state.samples.mu1
-        .slice(parameters.burnIn, parameters.numSamples)
-        .map((value, index) => ({ x: parameters.burnIn + index, y: value }));
+        .map((value, index) => ({ x: index, y: value }));
 
       // Update y-axis scale for component 1
       if (component1TraceChartRef.current?.options?.scales?.y) {
-        const delta = 1.5*Math.sqrt(parameters.variance1);
-        component1TraceChartRef.current.options.scales.y.min = parameters.mean1 - delta;
-        component1TraceChartRef.current.options.scales.y.max = parameters.mean1 + delta;
+        const delta = 1.5*parameters.sigma1;
+        component1TraceChartRef.current.options.scales.y.min = parameters.mu1 - delta;
+        component1TraceChartRef.current.options.scales.y.max = parameters.mu1 + delta;
       }
 
       if (component1TraceChartRef.current.options?.plugins?.annotation) {
         component1TraceChartRef.current.options.plugins.annotation.annotations = {
-          burnIn: {
-            type: 'box',
-            xMin: 0,
-            xMax: parameters.burnIn,
-            backgroundColor: 'rgba(200,200,200,0.15)',
-            borderWidth: 0
-          },
           meanLine: {
             type: 'line',
-            yMin: parameters.mean1,
-            yMax: parameters.mean1,
+            yMin: parameters.mu1,
+            yMax: parameters.mu1,
             borderColor: 'green',
             borderWidth: 2,
             borderDash: [5, 5]
@@ -546,29 +515,21 @@ export default function Charts({ state, parameters }: ChartsProps) {
 
     if (component2TraceChartRef.current) {
       component2TraceChartRef.current.data.datasets[0].data = state.samples.mu2
-        .slice(parameters.burnIn, parameters.numSamples)
-        .map((value, index) => ({ x: parameters.burnIn + index, y: value }));
+        .map((value, index) => ({ x: index, y: value }));
 
       // Update y-axis scale for component 2
       if (component2TraceChartRef.current?.options?.scales?.y) {
-        const delta = 1.5*Math.sqrt(parameters.variance2);
-        component2TraceChartRef.current.options.scales.y.min = parameters.mean2 - delta;
-        component2TraceChartRef.current.options.scales.y.max = parameters.mean2 + delta;
+        const delta = 1.5*parameters.sigma2;
+        component2TraceChartRef.current.options.scales.y.min = parameters.mu2 - delta;
+        component2TraceChartRef.current.options.scales.y.max = parameters.mu2 + delta;
       }
 
       if (component2TraceChartRef.current.options?.plugins?.annotation) {
         component2TraceChartRef.current.options.plugins.annotation.annotations = {
-          burnIn: {
-            type: 'box',
-            xMin: 0,
-            xMax: parameters.burnIn,
-            backgroundColor: 'rgba(200,200,200,0.15)',
-            borderWidth: 0
-          },
           meanLine: {
             type: 'line',
-            yMin: parameters.mean2,
-            yMax: parameters.mean2,
+            yMin: parameters.mu2,
+            yMax: parameters.mu2,
             borderColor: 'orange',
             borderWidth: 2,
             borderDash: [5, 5]

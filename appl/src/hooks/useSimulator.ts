@@ -1,224 +1,360 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import init, { Simulator } from '@/pkg/wasm';
+/* useSimulator.ts
+ * React hook that animates a Metropolis-Hastings chain whose primitives live
+ * in Rust/Wasm.  All Rust objects are *borrowed* across the boundary, so no
+ * Rust values are dropped between frames.
+ *
+ * – `pause`     (leaf)            ──> no deps
+ * – `runSimulation`               ──> depends on pause
+ * – `start`                       ──> depends on runSimulation
+ * – `reset` / `updateParameters`  ──> depend on pause (+ runSimulation for auto-restart)
+ */
+
+import init, {
+  generate_data,
+  JsGenerativeFunction,
+  JsTrace,
+} from "@/pkg/wasm";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
+/* ───────────────────────────────────────────────────────────────── helpers */
+
+function metropolisHastings(
+  gf: JsGenerativeFunction,
+  trace: JsTrace,
+  selection: readonly string[],
+): [JsTrace, boolean] {
+  const [proposal, logW] = gf.regenerate(
+    trace,
+    selection as unknown as string[]
+  ) as unknown as [JsTrace, number];
+
+  const accept =
+    logW === Infinity ? true : Math.log(Math.random()) < logW;
+
+  return [accept ? proposal : trace, accept];
+}
 
 export interface Parameters {
-  mean1: number;
-  mean2: number;
-  variance1: number;
-  variance2: number;
-  mixtureWeight: number;
+  mu1: number;  mu2: number;
+  sigma1: number; sigma2: number;
+  p: number;
   proposalStdDev: number;
   numSamples: number;
   burnIn: number;
-  delay: number;
+  delay: number;           // ms between animation frames
+  seed: number;            // for synthetic data + initial trace
 }
 
 export interface SimulationState {
-  mu1: number;
-  mu2: number;
+  mu1: number; mu2: number;
   acceptance_ratio: number;
-  samples: {
-    mu1: number[];
-    mu2: number[];
-  };
+  samples: { mu1: number[]; mu2: number[] };
   steps: Array<{ mu1: number; mu2: number; accepted: boolean }>;
   distribution: Array<{ x: number; pdf: number }>;
-  histogram: Array<{ x: number; frequency: number }>;
+  histogram:   Array<{ x: number; frequency: number }>;
 }
 
-// Helper for normal sampling (Box-Muller transform)
-function randn_bm() {
-  let u = 0, v = 0;
-  while(u === 0) u = Math.random();
-  while(v === 0) v = Math.random();
-  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
-}
-
-function createModelAndData(params: Parameters) {
-  const data = Float64Array.from(
-    Array.from({ length: 100 }, () => {
-      const r = Math.random();
-      return r < params.mixtureWeight
-        ? params.mean1 + randn_bm() * Math.sqrt(params.variance1)
-        : params.mean2 + randn_bm() * Math.sqrt(params.variance2);
-    })
+/* make program text + synthetic data for given params */
+function createModelAndData(p: Parameters) {
+  const data = generate_data(
+    p.mu1, p.sigma1, p.mu2, p.sigma2,
+    p.p, p.numSamples, BigInt(p.seed)
   );
+
   const model = `(
     (sample mu1 (normal 0.0 1.0))
     (sample mu2 (normal 0.0 1.0))
+
     (constrain (< mu1 mu2))
-    (define p ${params.mixtureWeight.toFixed(6)})
-    (define mix (mixture (list (normal mu1 ${Math.sqrt(params.variance1).toFixed(6)}) (normal mu2 ${Math.sqrt(params.variance2).toFixed(6)})) (list p (- 1.0 p))))
+
+    (define p ${p.p.toFixed(6)})
+    (define mix (mixture (list (normal mu1 ${p.sigma1.toFixed(6)}) (normal mu2 ${p.sigma2.toFixed(6)})) (list p (- 1.0 p))))
+
     (define observe-point (lambda (x) (observe (gensym) mix x)))
+
     (for-each observe-point data)
-  )`;
-  console.log('Generated model:', model);
+  )`
+
   return { model, data };
 }
 
+/* ─────────────────────────────────────────────────────────────── main hook */
+
 export function useSimulator() {
-  const [algorithm, setAlgorithm] = useState<Simulator | null>(null);
-  const [isRunning, setIsRunning] = useState(false);
-  const [animationId, setAnimationId] = useState<number | null>(null);
-  const [state, setState] = useState<SimulationState | null>(null);
-  const lastStepTimeRef = useRef<number>(0);
+  /* --------------- user-tunable params ---------------------------------- */
   const [parameters, setParameters] = useState<Parameters>({
-    mean1: -2,
-    mean2: 2,
-    variance1: 1,
-    variance2: 1,
-    mixtureWeight: 0.5,
+    mu1: -2, mu2: 2,
+    sigma1: 1, sigma2: 1,
+    p: 0.5,
     proposalStdDev: 1,
-    numSamples: 1000,
+    numSamples: 1_000,
     burnIn: 100,
-    delay: 1000
+    delay: 1_000,
+    seed: 42,
   });
 
-  // Ref to always have the latest isRunning value
-  const isRunningRef = useRef(isRunning);
-  useEffect(() => { isRunningRef.current = isRunning; }, [isRunning]);
+  /* --------------- wasm objects / chain state --------------------------- */
+  const [algorithm,   setAlgorithm]   = useState<JsGenerativeFunction | null>(null);
+  const [currentTrace, setCurrentTrace] = useState<JsTrace | null>(null);
+  const traceRef = useRef<JsTrace | null>(null);    // always points at latest trace
 
-  // Initialize WASM
+  /* derived state for charts */
+  const [simState, setSimState] = useState<SimulationState | null>(null);
+
+  /* --------------- animation bookkeeping -------------------------------- */
+  const animationId      = useRef<number | null>(null);
+  const isRunningRef     = useRef(false);
+  const [isRunning, setIsRunning] = useState(false);
+
+  const delayRef         = useRef(parameters.delay);
+  const lastStepTimeRef  = useRef(0);
+  const stepsRef         = useRef<Array<{ mu1: number; mu2: number; accepted: boolean }>>([]);
+  const acceptedCountRef = useRef(0);
+  const currentStepRef   = useRef(0);
+
+  useEffect(() => { delayRef.current   = parameters.delay;   }, [parameters.delay]);
+  useEffect(() => { isRunningRef.current = isRunning;        }, [isRunning]);
+  useEffect(() => { traceRef.current     = currentTrace;     }, [currentTrace]);
+
+  /* --------------- initial Wasm + first trace --------------------------- */
   useEffect(() => {
-    init().then(() => {
-      // Use the latest parameters for initial model/data
+    (async () => {
+      await init();
+
       const { model, data } = createModelAndData(parameters);
-      const algo = new Simulator(model);
-      algo.initialize(data);
-      setAlgorithm(algo);
-      updateState(algo);
-    }).catch(error => {
-      console.error('Failed to initialize WASM:', error);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      const gf = new JsGenerativeFunction(
+        model,
+        { mu1: parameters.proposalStdDev, mu2: parameters.proposalStdDev },
+        BigInt(parameters.seed)
+      );
+
+      /* finite-score first trace */
+      const args = new Float64Array(data);
+      let trace  = gf.simulate(args);
+      for (let i = 0; !Number.isFinite(trace.score()) && i < 100; i++) {
+        trace = gf.simulate(args);
+      }
+
+      setAlgorithm(gf);
+      setCurrentTrace(trace);
+      traceRef.current = trace;
+      updateState(trace, [], 0);
+    })().catch(console.error);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update state from algorithm
-  const updateState = useCallback((algo: Simulator) => {
-    try {
-      const stateJson = algo.get_state_json();
-      setState(JSON.parse(stateJson));
-    } catch (error) {
-      console.error('Error updating state:', error);
-    }
-  }, []);
+  /* --------------- helpers ---------------------------------------------- */
+  const selection = useMemo(() => ["mu1", "mu2"] as const, []);
 
-  // Pause simulation
+  const updateState = useCallback(
+    (
+      trace: JsTrace,
+      steps: Array<{ mu1: number; mu2: number; accepted: boolean }>,
+      accepted: number,
+    ) => {
+      const burn = Math.min(parameters.burnIn, steps.length);
+      const post = steps.slice(burn);
+
+      setSimState({
+        mu1: trace.get_choice("mu1"),
+        mu2: trace.get_choice("mu2"),
+        acceptance_ratio: steps.length === 0 ? 0 : accepted / steps.length,
+        steps,
+        samples: {
+          mu1: post.map(s => s.mu1),
+          mu2: post.map(s => s.mu2),
+        },
+        distribution: [],
+        histogram: [],
+      });
+    },
+    [parameters.burnIn]
+  );
+
+  /* ───────────────────────────────────────────────────────────── controls */
+
+  /* ---------- pause (leaf) --------------------------------------------- */
   const pause = useCallback(() => {
     setIsRunning(false);
-    if (animationId) {
-      cancelAnimationFrame(animationId);
-      setAnimationId(null);
-    }
-  }, [animationId, setIsRunning]);
+    if (animationId.current) cancelAnimationFrame(animationId.current);
+    animationId.current = null;
+  }, []);
 
-  // Run simulation loop
-  const runSimulation = useCallback((timestamp = 0) => {
-    if (!algorithm || !isRunningRef.current) {
+  /* ---------- runSimulation (depends on pause) ------------------------- */
+  const runSimulation = useCallback(function tick(ts = 0) {
+    if (!algorithm || !traceRef.current || !isRunningRef.current) return;
+
+    if (ts - lastStepTimeRef.current < delayRef.current) {
+      animationId.current = requestAnimationFrame(tick);
       return;
     }
 
-    const elapsed = timestamp - lastStepTimeRef.current;
-    console.log(`Current delay: ${parameters.delay}ms, Elapsed: ${elapsed.toFixed(2)}ms`);
-    
-    if (elapsed >= parameters.delay) {
-      console.log('Taking step - delay reached');
-      try {
-        algorithm.step();
-        const newState = JSON.parse(algorithm.get_state_json());
-        
-        if (
-          newState.samples.mu1.length < parameters.numSamples &&
-          isRunningRef.current
-        ) {
-          console.log(`Step taken. Total samples: ${newState.samples.mu1.length}`);
-          lastStepTimeRef.current = timestamp;
-          setState(newState);
-          const id = requestAnimationFrame(runSimulation);
-          setAnimationId(id);
-        } else {
-          console.log('Simulation complete - reached sample limit or paused');
-          pause();
-        }
-      } catch (error) {
-        console.error('Error in simulation step:', error);
+    try {
+      const [nextTrace, accepted] = metropolisHastings(
+        algorithm,
+        traceRef.current,
+        selection,
+      );
+
+      traceRef.current = nextTrace;
+      if (accepted) acceptedCountRef.current++;
+
+      stepsRef.current.push({
+        mu1: nextTrace.get_choice("mu1"),
+        mu2: nextTrace.get_choice("mu2"),
+        accepted,
+      });
+      currentStepRef.current++;
+
+      /* cap memory */
+      const cap = parameters.numSamples + parameters.burnIn + 10;
+      if (stepsRef.current.length > cap) stepsRef.current.shift();
+
+      updateState(nextTrace, stepsRef.current, acceptedCountRef.current);
+
+      if (currentStepRef.current >= parameters.numSamples + parameters.burnIn) {
         pause();
+      } else {
+        lastStepTimeRef.current = ts;
+        animationId.current = requestAnimationFrame(tick);
       }
-    } else {
-      // Always request next frame, even if we haven't reached the delay
-      const id = requestAnimationFrame(runSimulation);
-      setAnimationId(id);
+    } catch (err) {
+      console.error(err);
+      pause();
     }
-  }, [algorithm, parameters.delay, parameters.numSamples, pause]);
+  },
+  [
+    algorithm,
+    selection,
+    parameters.numSamples,
+    parameters.burnIn,
+    pause,
+    updateState,
+  ]);
 
-  // Start simulation
+  /* ---------- start (depends on runSimulation) ------------------------- */
   const start = useCallback(() => {
-    if (!algorithm) {
-      console.error('Algorithm not initialized');
+    if (!algorithm || !traceRef.current) {
+      console.error("Algorithm or trace not ready");
       return;
     }
-    console.log(`Starting simulation with delay: ${parameters.delay}ms`);
+    if (isRunningRef.current) return;
+
+    delayRef.current        = parameters.delay;
     lastStepTimeRef.current = performance.now();
     setIsRunning(true);
-    const id = requestAnimationFrame(runSimulation);
-    setAnimationId(id);
-  }, [algorithm, runSimulation, parameters.delay]);
+    animationId.current = requestAnimationFrame(runSimulation);
+  }, [algorithm, parameters.delay, runSimulation]);
 
-  // Update parameters and reinitialize simulator
-  const updateParameters = useCallback((newParams: Partial<Parameters>) => {
-    setParameters(prev => {
-      const updated = { ...prev, ...newParams };
-      if (algorithm) {
-        console.log('Parameters updated:', updated);
-        lastStepTimeRef.current = performance.now();
-        // Always generate new data and reinitialize the sampler
-        const { model, data } = createModelAndData(updated);
-        const algo = new Simulator(model);
-        algo.initialize(data);
-        setAlgorithm(algo);
-        updateState(algo);
-      }
-      return updated;
-    });
-  }, [algorithm, updateState]);
-
-  // Reset simulation
+  /* ---------- reset (depends on pause) --------------------------------- */
   const reset = useCallback(() => {
-    if (!algorithm) return;
     pause();
-    
-    // Generate new data points
-    const data = Float64Array.from(
-      Array.from({ length: 100 }, () => {
-        const r = Math.random();
-        return r < 0.5 ? 
-          parameters.mean1 + Math.random() * Math.sqrt(parameters.variance1) :
-          parameters.mean2 + Math.random() * Math.sqrt(parameters.variance2);
-      })
+    stepsRef.current = [];
+    acceptedCountRef.current = 0;
+    currentStepRef.current   = 0;
+
+    const { model, data } = createModelAndData(parameters);
+    const gf = new JsGenerativeFunction(
+      model,
+      { mu1: parameters.proposalStdDev, mu2: parameters.proposalStdDev },
+      BigInt(parameters.seed)
     );
 
-    algorithm.reset();
-    algorithm.initialize(data);
-    updateState(algorithm);
-  }, [algorithm, pause, parameters, updateState]);
+    const args = new Float64Array(data);
+    let trace  = gf.simulate(args);
+    for (let i = 0; !Number.isFinite(trace.score()) && i < 100; i++) {
+      trace = gf.simulate(args);
+    }
 
-  // Cleanup
-  useEffect(() => {
-    return () => {
-      if (animationId) {
-        cancelAnimationFrame(animationId);
+    setAlgorithm(gf);
+    setCurrentTrace(trace);
+    traceRef.current = trace;
+    updateState(trace, [], 0);
+  }, [pause, parameters, updateState]);
+
+  /* ---------- updateParameters (depends on pause + runSimulation) ------ */
+  const updateParameters = useCallback((delta: Partial<Parameters>) => {
+    setParameters(prev => {
+      const next = { ...prev, ...delta };
+
+      // Validate all required parameters are valid numbers
+      const requiredParams = ['mu1', 'mu2', 'sigma1', 'sigma2', 'p', 'proposalStdDev', 'numSamples', 'burnIn', 'delay', 'seed'];
+      const isValid = requiredParams.every(param => 
+        typeof next[param as keyof Parameters] === 'number' && 
+        !isNaN(next[param as keyof Parameters])
+      );
+
+      if (!isValid) {
+        return prev; // Keep previous valid state if new state is invalid
       }
-    };
-  }, [animationId]);
 
+      const structural =
+        "mu1" in delta || "mu2" in delta ||
+        "sigma1" in delta || "sigma2" in delta ||
+        "p" in delta || "seed" in delta ||
+        "proposalStdDev" in delta;
+
+      const wasRunning = isRunningRef.current;
+
+      if (structural) pause();
+
+      if (structural) {
+        const { model, data } = createModelAndData(next);
+        const gf = new JsGenerativeFunction(
+          model,
+          { mu1: next.proposalStdDev, mu2: next.proposalStdDev },
+          BigInt(next.seed)
+        );
+
+        const args = new Float64Array(data);
+        let trace  = gf.simulate(args);
+        for (let i = 0; !Number.isFinite(trace.score()) && i < 100; i++) {
+          trace = gf.simulate(args);
+        }
+
+        stepsRef.current         = [];
+        acceptedCountRef.current = 0;
+        currentStepRef.current   = 0;
+
+        setAlgorithm(gf);
+        setCurrentTrace(trace);
+        traceRef.current = trace;
+        updateState(trace, [], 0);
+
+        if (wasRunning) {
+          delayRef.current        = next.delay;
+          lastStepTimeRef.current = performance.now();
+          setIsRunning(true);
+          animationId.current = requestAnimationFrame(runSimulation);
+        }
+      } else {
+        /* non-structural change (just delay, numSamples, etc.) */
+        delayRef.current = next.delay;
+      }
+      return next;
+    });
+  }, [pause, runSimulation, updateState]);
+
+  /* --------------- cleanup on unmount ---------------------------------- */
+  useEffect(() => () => {
+    if (animationId.current) cancelAnimationFrame(animationId.current);
+  }, []);
+
+  /* --------------- exposed API ------------------------------------------ */
   return {
-    algorithm,
-    isRunning,
+    state: simState,
+    parameters,
     start,
     pause,
     reset,
     updateParameters,
-    state,
-    parameters
+    isRunning,
+    algorithm,
   };
-} 
+}

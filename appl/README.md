@@ -34,16 +34,10 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 - Parameters
   - When parameters are changed, make sure that all of the UI elements are updated accordingly as well as removing leftover elements from other simulations
-  - Make sure I can change the simulation speed as its running
   - Make sure that the reset button is working correctly
-  - Fix the burn period and number of sample discrepency.
 
-- Statistics
-  - Make sure to add the statistics as a UI component
-  - 
 
 - Walk Visualization
-  - Add title
   - Make sure axes are updated according to parameters
   - Remove burn-in from the points animation
   - Make sure dots are reflective of being weighted
