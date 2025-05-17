@@ -15,7 +15,7 @@ Chart.register(...registerables, annotationPlugin);
 export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
   const [error] = useState<string | null>(null);
-  
+
   const {
     algorithm,
     isRunning,
@@ -24,7 +24,7 @@ export default function Home() {
     reset,
     updateParameters,
     state,
-    parameters
+    parameters,
   } = useSimulator();
 
   useEffect(() => {
@@ -51,7 +51,9 @@ export default function Home() {
         <p>{error}</p>
         <p className="mt-2">
           Please make sure you&apos;ve built the WASM module with{' '}
-          <code className="bg-gray-100 p-1 rounded">wasm-pack build --target web</code>
+          <code className="bg-gray-100 p-1 rounded">
+            wasm-pack build --target web
+          </code>
           and that you&apos;re running this page from a web server.
         </p>
       </div>
@@ -78,11 +80,16 @@ export default function Home() {
       <div className="space-y-8 w-full">
         {/* Charts in Grid Layout */}
         <Charts state={state} parameters={parameters} />
-        
-        {/* Walk Visualization (Full Width) */}
-        {state && <WalkVisualization state={state} isRunning={isRunning} parameters={parameters} />}
-      </div>
 
+        {/* Walk Visualization (Full Width) */}
+        {state && (
+          <WalkVisualization
+            state={state}
+            isRunning={isRunning}
+            parameters={parameters}
+          />
+        )}
+      </div>
     </main>
   );
 }

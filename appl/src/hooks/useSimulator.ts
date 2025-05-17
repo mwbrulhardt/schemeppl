@@ -14,19 +14,14 @@ import init, {
   JsGenerativeFunction,
   JsTrace,
   metropolis_hastings,
-} from "@/pkg/wasm";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-
+} from '@/pkg/wasm';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export interface Parameters {
-  mu1: number;  mu2: number;
-  sigma1: number; sigma2: number;
+  mu1: number;
+  mu2: number;
+  sigma1: number;
+  sigma2: number;
   p: number;
   proposalStdDev1: number;
   proposalStdDev2: number;
@@ -38,16 +33,16 @@ export interface Parameters {
 }
 
 export interface SimulationState {
-  mu1: number; mu2: number;
+  mu1: number;
+  mu2: number;
   acceptance_ratio: number;
   samples: { mu1: number[]; mu2: number[] };
   steps: Array<{ mu1: number; mu2: number; accepted: boolean }>;
   distribution: Array<{ x: number; pdf: number }>;
-  histogram:   Array<{ x: number; frequency: number }>;
+  histogram: Array<{ x: number; frequency: number }>;
   data: number[];
   labels: number[];
 }
-
 
 /*Create model for the given parameters*/
 function createModel(p: Parameters) {
@@ -66,12 +61,16 @@ function createModel(p: Parameters) {
   )`;
 }
 
-
 /*Create dataset for the given parameters*/
 function createDataset(p: Parameters) {
   return generate_data(
-    p.mu1, p.sigma1, p.mu2, p.sigma2,
-    p.p, p.sampleSize, BigInt(p.seed)
+    p.mu1,
+    p.sigma1,
+    p.mu2,
+    p.sigma2,
+    p.p,
+    p.sampleSize,
+    BigInt(p.seed)
   );
 }
 
@@ -80,8 +79,10 @@ function createDataset(p: Parameters) {
 export function useSimulator() {
   /* --------------- user-tunable params ---------------------------------- */
   const [parameters, setParameters] = useState<Parameters>({
-    mu1: -2, mu2: 2,
-    sigma1: 1, sigma2: 1,
+    mu1: -2,
+    mu2: 2,
+    sigma1: 1,
+    sigma2: 1,
     p: 0.5,
     proposalStdDev1: 0.1,
     proposalStdDev2: 0.1,
@@ -93,11 +94,13 @@ export function useSimulator() {
   });
 
   /* --------------- wasm objects / chain state --------------------------- */
-  const [algorithm,   setAlgorithm]   = useState<JsGenerativeFunction | null>(null);
+  const [algorithm, setAlgorithm] = useState<JsGenerativeFunction | null>(null);
   const [currentTrace, setCurrentTrace] = useState<JsTrace | null>(null);
-  const traceRef = useRef<JsTrace | null>(null);    // always points at latest trace
+  const traceRef = useRef<JsTrace | null>(null); // always points at latest trace
   // Cache the current dataset to ensure consistency
-  const datasetRef = useRef<{ data: Float64Array, labels: Uint8Array } | null>(null);
+  const datasetRef = useRef<{ data: Float64Array; labels: Uint8Array } | null>(
+    null
+  );
   // Keep a ref to the latest parameters to use in refreshDataset
   const paramsRef = useRef<Parameters>(parameters);
 
@@ -113,19 +116,27 @@ export function useSimulator() {
   const lastUiUpdateRef = useRef<number>(0);
 
   /* --------------- animation bookkeeping -------------------------------- */
-  const animationId      = useRef<number | null>(null);
-  const isRunningRef     = useRef(false);
+  const animationId = useRef<number | null>(null);
+  const isRunningRef = useRef(false);
   const [isRunning, setIsRunning] = useState(false);
 
-  const delayRef         = useRef(parameters.delay);
-  const lastStepTimeRef  = useRef(0);
-  const stepsRef         = useRef<Array<{ mu1: number; mu2: number; accepted: boolean }>>([]);
+  const delayRef = useRef(parameters.delay);
+  const lastStepTimeRef = useRef(0);
+  const stepsRef = useRef<
+    Array<{ mu1: number; mu2: number; accepted: boolean }>
+  >([]);
   const acceptedCountRef = useRef(0);
-  const currentStepRef   = useRef(0);
+  const currentStepRef = useRef(0);
 
-  useEffect(() => { delayRef.current   = parameters.delay;   }, [parameters.delay]);
-  useEffect(() => { isRunningRef.current = isRunning;        }, [isRunning]);
-  useEffect(() => { traceRef.current     = currentTrace;     }, [currentTrace]);
+  useEffect(() => {
+    delayRef.current = parameters.delay;
+  }, [parameters.delay]);
+  useEffect(() => {
+    isRunningRef.current = isRunning;
+  }, [isRunning]);
+  useEffect(() => {
+    traceRef.current = currentTrace;
+  }, [currentTrace]);
 
   /* --------------- initial Wasm + first trace --------------------------- */
   useEffect(() => {
@@ -135,7 +146,7 @@ export function useSimulator() {
       // Create and cache the initial dataset with the current parameters
       const dataset = refreshDataset(parameters);
       const model = createModel(parameters);
-      
+
       const gf = new JsGenerativeFunction(
         model,
         { mu1: parameters.proposalStdDev1, mu2: parameters.proposalStdDev2 },
@@ -144,7 +155,7 @@ export function useSimulator() {
 
       /* finite-score first trace */
       const args = new Float64Array(dataset.data);
-      let trace  = gf.simulate(args);
+      let trace = gf.simulate(args);
       for (let i = 0; !Number.isFinite(trace.score()) && i < 100; i++) {
         trace = gf.simulate(args);
       }
@@ -154,11 +165,11 @@ export function useSimulator() {
       traceRef.current = trace;
       updateState(trace, [], 0, true);
     })().catch(console.error);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* --------------- helpers ---------------------------------------------- */
-  const selection = useMemo(() => ["mu1", "mu2"] as const, []);
+  const selection = useMemo(() => ['mu1', 'mu2'] as const, []);
 
   // Create and cache a new dataset based on current parameters
   const refreshDataset = useCallback((params?: Parameters) => {
@@ -171,7 +182,7 @@ export function useSimulator() {
       sigma1: p.sigma1,
       sigma2: p.sigma2,
       p: p.p,
-      seed: p.seed
+      seed: p.seed,
     });
 
     const dataset = createDataset(p);
@@ -181,19 +192,23 @@ export function useSimulator() {
       dataLength: dataset.data ? dataset.data.length : 0,
       hasLabels: !!dataset.labels,
       labelsLength: dataset.labels ? new Uint8Array(dataset.labels).length : 0,
-      firstFewDataPoints: dataset.data ? Array.from(dataset.data).slice(0, 5) : []
+      firstFewDataPoints: dataset.data
+        ? Array.from(dataset.data).slice(0, 5)
+        : [],
     });
 
     // Store both data and labels in a consistent format
     datasetRef.current = {
       data: dataset.data,
-      labels: new Uint8Array(dataset.labels)
+      labels: new Uint8Array(dataset.labels),
     };
-    
+
     if (datasetRef.current.data.length !== p.sampleSize) {
-      console.warn(`Dataset size mismatch: expected ${p.sampleSize}, got ${datasetRef.current.data.length}`);
+      console.warn(
+        `Dataset size mismatch: expected ${p.sampleSize}, got ${datasetRef.current.data.length}`
+      );
     }
-    
+
     return datasetRef.current;
   }, []);
 
@@ -202,7 +217,7 @@ export function useSimulator() {
       trace: JsTrace,
       steps: Array<{ mu1: number; mu2: number; accepted: boolean }>,
       accepted: number,
-      force = false,
+      force = false
     ) => {
       // Throttle to ~15 fps (≈66 ms)
       const now = Date.now();
@@ -219,8 +234,8 @@ export function useSimulator() {
       const dataset = datasetRef.current || refreshDataset(parameters);
 
       setSimState({
-        mu1: trace.get_choice("mu1"),
-        mu2: trace.get_choice("mu2"),
+        mu1: trace.get_choice('mu1'),
+        mu2: trace.get_choice('mu2'),
         acceptance_ratio: steps.length === 0 ? 0 : accepted / steps.length,
         steps,
         samples: {
@@ -246,58 +261,67 @@ export function useSimulator() {
   }, []);
 
   /* ---------- runSimulation (depends on pause) ------------------------- */
-  const runSimulation = useCallback(function tick(ts = 0) {
-    if (!algorithm || !traceRef.current || !isRunningRef.current) return;
+  const runSimulation = useCallback(
+    function tick(ts = 0) {
+      if (!algorithm || !traceRef.current || !isRunningRef.current) return;
 
-    if (ts - lastStepTimeRef.current < delayRef.current) {
-      animationId.current = requestAnimationFrame(tick);
-      return;
-    }
-
-    try {
-      const [nextTrace, accepted] = metropolis_hastings(
-        algorithm,
-        traceRef.current,
-        [...selection],
-      );
-      traceRef.current = nextTrace;
-      if (accepted) acceptedCountRef.current++;
-
-      stepsRef.current.push({
-        mu1: nextTrace.get_choice("mu1"),
-        mu2: nextTrace.get_choice("mu2"),
-        accepted,
-      });
-      currentStepRef.current++;
-
-      /* cap memory */
-      const cap = parameters.numSteps + parameters.burnIn + 10;
-      if (stepsRef.current.length > cap) stepsRef.current.shift();
-
-      updateState(nextTrace, stepsRef.current, acceptedCountRef.current);
-
-      if (currentStepRef.current >= parameters.numSteps + parameters.burnIn) {
-        pause();
-      } else {
-        lastStepTimeRef.current = ts;
+      if (ts - lastStepTimeRef.current < delayRef.current) {
         animationId.current = requestAnimationFrame(tick);
+        return;
       }
-    } catch (err) {
-      console.error(err);
-      pause();
-    }
-  },
-  [algorithm, selection, parameters.numSteps, parameters.burnIn, updateState, pause]);
+
+      try {
+        const [nextTrace, accepted] = metropolis_hastings(
+          algorithm,
+          traceRef.current,
+          [...selection]
+        );
+        traceRef.current = nextTrace;
+        if (accepted) acceptedCountRef.current++;
+
+        stepsRef.current.push({
+          mu1: nextTrace.get_choice('mu1'),
+          mu2: nextTrace.get_choice('mu2'),
+          accepted,
+        });
+        currentStepRef.current++;
+
+        /* cap memory */
+        const cap = parameters.numSteps + parameters.burnIn + 10;
+        if (stepsRef.current.length > cap) stepsRef.current.shift();
+
+        updateState(nextTrace, stepsRef.current, acceptedCountRef.current);
+
+        if (currentStepRef.current >= parameters.numSteps + parameters.burnIn) {
+          pause();
+        } else {
+          lastStepTimeRef.current = ts;
+          animationId.current = requestAnimationFrame(tick);
+        }
+      } catch (err) {
+        console.error(err);
+        pause();
+      }
+    },
+    [
+      algorithm,
+      selection,
+      parameters.numSteps,
+      parameters.burnIn,
+      updateState,
+      pause,
+    ]
+  );
 
   /* ---------- start (depends on runSimulation) ------------------------- */
   const start = useCallback(() => {
     if (!algorithm || !traceRef.current) {
-      console.error("Algorithm or trace not ready");
+      console.error('Algorithm or trace not ready');
       return;
     }
     if (isRunningRef.current) return;
 
-    delayRef.current        = parameters.delay;
+    delayRef.current = parameters.delay;
     lastStepTimeRef.current = performance.now();
     setIsRunning(true);
     animationId.current = requestAnimationFrame(runSimulation);
@@ -308,12 +332,12 @@ export function useSimulator() {
     pause();
     stepsRef.current = [];
     acceptedCountRef.current = 0;
-    currentStepRef.current   = 0;
+    currentStepRef.current = 0;
 
     // Refresh dataset with current parameters
     const dataset = refreshDataset(parameters);
     const model = createModel(parameters);
-    
+
     const gf = new JsGenerativeFunction(
       model,
       { mu1: parameters.proposalStdDev1, mu2: parameters.proposalStdDev2 },
@@ -321,7 +345,7 @@ export function useSimulator() {
     );
 
     const args = new Float64Array(dataset.data);
-    let trace  = gf.simulate(args);
+    let trace = gf.simulate(args);
     for (let i = 0; !Number.isFinite(trace.score()) && i < 100; i++) {
       trace = gf.simulate(args);
     }
@@ -333,92 +357,116 @@ export function useSimulator() {
   }, [pause, parameters, updateState, refreshDataset]);
 
   /* ---------- updateParameters (depends on pause + runSimulation) ------ */
-  const updateParameters = useCallback((delta: Partial<Parameters>) => {
-    // Temporary debugging for sample size changes
-    if ('sampleSize' in delta) {
-      console.log('Sample size changing:', {
-        from: parameters.sampleSize,
-        to: delta.sampleSize,
-        delta
-      });
-    }
-    
-    setParameters(prev => {
-      const next = { ...prev, ...delta };
-
-      // Validate all required parameters are valid numbers
-      const requiredParams = ['mu1', 'mu2', 'sigma1', 'sigma2', 'p', 'proposalStdDev1', 'proposalStdDev2', 'numSteps', 'burnIn', 'delay', 'seed', 'sampleSize'];
-      const isValid = requiredParams.every(param => 
-        typeof next[param as keyof Parameters] === 'number' && 
-        !isNaN(next[param as keyof Parameters])
-      );
-
-      if (!isValid) {
-        return prev; // Keep previous valid state if new state is invalid
+  const updateParameters = useCallback(
+    (delta: Partial<Parameters>) => {
+      // Temporary debugging for sample size changes
+      if ('sampleSize' in delta) {
+        console.log('Sample size changing:', {
+          from: parameters.sampleSize,
+          to: delta.sampleSize,
+          delta,
+        });
       }
 
-      const structural =
-        "mu1" in delta || "mu2" in delta ||
-        "sigma1" in delta || "sigma2" in delta ||
-        "p" in delta || "seed" in delta ||
-        "proposalStdDev1" in delta || "proposalStdDev2" in delta ||
-        "sampleSize" in delta;
+      setParameters((prev) => {
+        const next = { ...prev, ...delta };
 
-      const wasRunning = isRunningRef.current;
-
-      if (structural) pause();
-
-      if (structural) {
-        // Use the new parameters for model and dataset creation
-        const model = createModel(next);
-        
-        // Explicitly refresh the dataset with the new parameters
-        const dataset = refreshDataset(next);
-        console.log('Refreshed dataset:', {
-          params: next,
-          dataLength: dataset.data.length,
-          labelsLength: dataset.labels.length
-        });
-        
-        const gf = new JsGenerativeFunction(
-          model,
-          { mu1: next.proposalStdDev1, mu2: next.proposalStdDev2 },
-          BigInt(next.seed)
+        // Validate all required parameters are valid numbers
+        const requiredParams = [
+          'mu1',
+          'mu2',
+          'sigma1',
+          'sigma2',
+          'p',
+          'proposalStdDev1',
+          'proposalStdDev2',
+          'numSteps',
+          'burnIn',
+          'delay',
+          'seed',
+          'sampleSize',
+        ];
+        const isValid = requiredParams.every(
+          (param) =>
+            typeof next[param as keyof Parameters] === 'number' &&
+            !isNaN(next[param as keyof Parameters])
         );
 
-        const args = new Float64Array(dataset.data);
-        let trace  = gf.simulate(args);
-        for (let i = 0; !Number.isFinite(trace.score()) && i < 100; i++) {
-          trace = gf.simulate(args);
+        if (!isValid) {
+          return prev; // Keep previous valid state if new state is invalid
         }
 
-        stepsRef.current         = [];
-        acceptedCountRef.current = 0;
-        currentStepRef.current   = 0;
+        const structural =
+          'mu1' in delta ||
+          'mu2' in delta ||
+          'sigma1' in delta ||
+          'sigma2' in delta ||
+          'p' in delta ||
+          'seed' in delta ||
+          'proposalStdDev1' in delta ||
+          'proposalStdDev2' in delta ||
+          'sampleSize' in delta;
 
-        setAlgorithm(gf);
-        setCurrentTrace(trace);
-        traceRef.current = trace;
-        updateState(trace, [], 0, true);
+        const wasRunning = isRunningRef.current;
 
-        if (wasRunning) {
-          delayRef.current        = next.delay;
-          lastStepTimeRef.current = performance.now();
-          setIsRunning(true);
-          animationId.current = requestAnimationFrame(runSimulation);
+        if (structural) pause();
+
+        if (structural) {
+          // Use the new parameters for model and dataset creation
+          const model = createModel(next);
+
+          // Explicitly refresh the dataset with the new parameters
+          const dataset = refreshDataset(next);
+          console.log('Refreshed dataset:', {
+            params: next,
+            dataLength: dataset.data.length,
+            labelsLength: dataset.labels.length,
+          });
+
+          const gf = new JsGenerativeFunction(
+            model,
+            { mu1: next.proposalStdDev1, mu2: next.proposalStdDev2 },
+            BigInt(next.seed)
+          );
+
+          const args = new Float64Array(dataset.data);
+          let trace = gf.simulate(args);
+          for (let i = 0; !Number.isFinite(trace.score()) && i < 100; i++) {
+            trace = gf.simulate(args);
+          }
+
+          stepsRef.current = [];
+          acceptedCountRef.current = 0;
+          currentStepRef.current = 0;
+
+          setAlgorithm(gf);
+          setCurrentTrace(trace);
+          traceRef.current = trace;
+          updateState(trace, [], 0, true);
+
+          if (wasRunning) {
+            delayRef.current = next.delay;
+            lastStepTimeRef.current = performance.now();
+            setIsRunning(true);
+            animationId.current = requestAnimationFrame(runSimulation);
+          }
+        } else {
+          /* non-structural change (just delay, numSteps, etc.) */
+          delayRef.current = next.delay;
         }
-      } else {
-        /* non-structural change (just delay, numSteps, etc.) */
-        delayRef.current = next.delay;
-      }
-      return next;
-    });
-  }, [pause, runSimulation, updateState, refreshDataset, parameters]);
+        return next;
+      });
+    },
+    [pause, runSimulation, updateState, refreshDataset, parameters]
+  );
 
   /* --------------- cleanup on unmount ---------------------------------- */
-  useEffect(() => () => {
-    if (animationId.current) cancelAnimationFrame(animationId.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (animationId.current) cancelAnimationFrame(animationId.current);
+    },
+    []
+  );
 
   /* --------------- exposed API ------------------------------------------ */
   return {

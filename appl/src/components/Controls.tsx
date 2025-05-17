@@ -20,10 +20,12 @@ export default function Controls({
   isRunning,
   onStart,
   onPause,
-  onReset
+  onReset,
 }: ControlsProps) {
   // Local state for input values and validity
-  const [inputValues, setInputValues] = useState<Record<keyof Parameters, string>>({
+  const [inputValues, setInputValues] = useState<
+    Record<keyof Parameters, string>
+  >({
     mu1: parameters.mu1.toString(),
     mu2: parameters.mu2.toString(),
     sigma1: parameters.sigma1.toString(),
@@ -35,9 +37,11 @@ export default function Controls({
     burnIn: parameters.burnIn.toString(),
     delay: parameters.delay.toString(),
     seed: parameters.seed.toString(),
-    sampleSize: parameters.sampleSize.toString()
+    sampleSize: parameters.sampleSize.toString(),
   });
-  const [inputValidity, setInputValidity] = useState<Record<keyof Parameters, boolean>>({
+  const [inputValidity, setInputValidity] = useState<
+    Record<keyof Parameters, boolean>
+  >({
     mu1: true,
     mu2: true,
     sigma1: true,
@@ -49,24 +53,28 @@ export default function Controls({
     burnIn: true,
     delay: true,
     seed: true,
-    sampleSize: true
+    sampleSize: true,
   });
 
   // Validation rules for each parameter
-  const validators = useMemo(() => ({
-    mu1: (v: string) => !isNaN(Number(v)),
-    mu2: (v: string) => !isNaN(Number(v)),
-    sigma1: (v: string) => !isNaN(Number(v)) && Number(v) > 0,
-    sigma2: (v: string) => !isNaN(Number(v)) && Number(v) > 0,
-    p: (v: string) => !isNaN(Number(v)) && Number(v) > 0 && Number(v) < 1,
-    proposalStdDev1: (v: string) => !isNaN(Number(v)) && Number(v) > 0,
-    proposalStdDev2: (v: string) => !isNaN(Number(v)) && Number(v) > 0,
-    numSteps: (v: string) => !isNaN(Number(v)) && Number(v) >= 100,
-    burnIn: (v: string) => !isNaN(Number(v)) && Number(v) >= 0,
-    delay: (v: string) => !isNaN(Number(v)) && Number(v) >= 0 && Number(v) <= 1000,
-    seed: (v: string) => !isNaN(Number(v)) && Number(v) >= 0,
-    sampleSize: (v: string) => !isNaN(Number(v)) && Number(v) >= 10
-  }), []);
+  const validators = useMemo(
+    () => ({
+      mu1: (v: string) => !isNaN(Number(v)),
+      mu2: (v: string) => !isNaN(Number(v)),
+      sigma1: (v: string) => !isNaN(Number(v)) && Number(v) > 0,
+      sigma2: (v: string) => !isNaN(Number(v)) && Number(v) > 0,
+      p: (v: string) => !isNaN(Number(v)) && Number(v) > 0 && Number(v) < 1,
+      proposalStdDev1: (v: string) => !isNaN(Number(v)) && Number(v) > 0,
+      proposalStdDev2: (v: string) => !isNaN(Number(v)) && Number(v) > 0,
+      numSteps: (v: string) => !isNaN(Number(v)) && Number(v) >= 100,
+      burnIn: (v: string) => !isNaN(Number(v)) && Number(v) >= 0,
+      delay: (v: string) =>
+        !isNaN(Number(v)) && Number(v) >= 0 && Number(v) <= 1000,
+      seed: (v: string) => !isNaN(Number(v)) && Number(v) >= 0,
+      sampleSize: (v: string) => !isNaN(Number(v)) && Number(v) >= 10,
+    }),
+    []
+  );
 
   // Update local state when parameters change
   useEffect(() => {
@@ -82,7 +90,7 @@ export default function Controls({
       burnIn: parameters.burnIn.toString(),
       delay: parameters.delay.toString(),
       seed: parameters.seed.toString(),
-      sampleSize: parameters.sampleSize.toString()
+      sampleSize: parameters.sampleSize.toString(),
     });
     setInputValidity({
       mu1: true,
@@ -96,31 +104,37 @@ export default function Controls({
       burnIn: true,
       delay: true,
       seed: true,
-      sampleSize: true
+      sampleSize: true,
     });
   }, [parameters]);
 
-  const handleParameterChange = useCallback((key: keyof Parameters, value: string) => {
-    setInputValues(prev => ({ ...prev, [key]: value }));
-    const isValid = validators[key](value);
-    setInputValidity(prev => ({ ...prev, [key]: isValid }));
-    if (isValid) {
-      onUpdateParameters({ [key]: parseFloat(value) });
-    }
-  }, [onUpdateParameters, validators]);
+  const handleParameterChange = useCallback(
+    (key: keyof Parameters, value: string) => {
+      setInputValues((prev) => ({ ...prev, [key]: value }));
+      const isValid = validators[key](value);
+      setInputValidity((prev) => ({ ...prev, [key]: isValid }));
+      if (isValid) {
+        onUpdateParameters({ [key]: parseFloat(value) });
+      }
+    },
+    [onUpdateParameters, validators]
+  );
 
-  // Add a separate handler for the delay slider 
-  const handleDelayChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setInputValues(prev => ({ ...prev, delay: value }));
-    
-    // The delay value is always valid based on the slider constraints
-    const numericValue = parseFloat(value);
-    console.log(`Slider changed to: ${numericValue}ms`);
-    
-    // Update the parameter immediately
-    onUpdateParameters({ delay: numericValue });
-  }, [onUpdateParameters]);
+  // Add a separate handler for the delay slider
+  const handleDelayChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const value = e.target.value;
+      setInputValues((prev) => ({ ...prev, delay: value }));
+
+      // The delay value is always valid based on the slider constraints
+      const numericValue = parseFloat(value);
+      console.log(`Slider changed to: ${numericValue}ms`);
+
+      // Update the parameter immediately
+      onUpdateParameters({ delay: numericValue });
+    },
+    [onUpdateParameters]
+  );
 
   // Helper to get input class
   const getInputClass = (key: keyof Parameters) =>
@@ -135,7 +149,8 @@ export default function Controls({
   }, [state, parameters.burnIn, parameters.numSteps]);
 
   // Determine if the simulation has completed all requested samples
-  const simulationCompleted = !isRunning && postBurnSteps >= parameters.numSteps;
+  const simulationCompleted =
+    !isRunning && postBurnSteps >= parameters.numSteps;
 
   // Main control button click behaviour
   const handleMainButtonClick = () => {
@@ -152,7 +167,12 @@ export default function Controls({
 
   // Helper to render KaTeX label
   const renderKaTeXLabel = (latex: string) => {
-    return <div className="w-16" dangerouslySetInnerHTML={{ __html: katex.renderToString(latex) }} />;
+    return (
+      <div
+        className="w-16"
+        dangerouslySetInnerHTML={{ __html: katex.renderToString(latex) }}
+      />
+    );
   };
 
   return (
@@ -162,12 +182,14 @@ export default function Controls({
       <div className="space-y-6">
         <div className="bg-white p-4 rounded-lg shadow">
           <h3 className="text-lg font-medium mb-4">Mixture Model</h3>
-          
+
           {/* Components Grid */}
           <div className="grid md:grid-cols-2 gap-6 mb-6">
             {/* Component 1 */}
             <div>
-              <h4 className="text-sm font-medium text-gray-600 mb-3">Component 1</h4>
+              <h4 className="text-sm font-medium text-gray-600 mb-3">
+                Component 1
+              </h4>
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
                   <div className="flex items-center gap-3">
@@ -175,7 +197,9 @@ export default function Controls({
                     <input
                       type="number"
                       value={inputValues.mu1}
-                      onChange={(e) => handleParameterChange('mu1', e.target.value)}
+                      onChange={(e) =>
+                        handleParameterChange('mu1', e.target.value)
+                      }
                       step="0.1"
                       className={getInputClass('mu1')}
                       disabled={isRunning}
@@ -186,7 +210,9 @@ export default function Controls({
                     <input
                       type="number"
                       value={inputValues.sigma1}
-                      onChange={(e) => handleParameterChange('sigma1', e.target.value)}
+                      onChange={(e) =>
+                        handleParameterChange('sigma1', e.target.value)
+                      }
                       min="0.1"
                       step="0.1"
                       className={getInputClass('sigma1')}
@@ -199,7 +225,9 @@ export default function Controls({
                   <input
                     type="number"
                     value={inputValues.proposalStdDev1}
-                    onChange={(e) => handleParameterChange('proposalStdDev1', e.target.value)}
+                    onChange={(e) =>
+                      handleParameterChange('proposalStdDev1', e.target.value)
+                    }
                     min="0.1"
                     step="0.1"
                     className={getInputClass('proposalStdDev1')}
@@ -211,7 +239,9 @@ export default function Controls({
 
             {/* Component 2 */}
             <div>
-              <h4 className="text-sm font-medium text-gray-600 mb-3">Component 2</h4>
+              <h4 className="text-sm font-medium text-gray-600 mb-3">
+                Component 2
+              </h4>
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
                   <div className="flex items-center gap-3">
@@ -219,7 +249,9 @@ export default function Controls({
                     <input
                       type="number"
                       value={inputValues.mu2}
-                      onChange={(e) => handleParameterChange('mu2', e.target.value)}
+                      onChange={(e) =>
+                        handleParameterChange('mu2', e.target.value)
+                      }
                       step="0.1"
                       className={getInputClass('mu2')}
                       disabled={isRunning}
@@ -230,7 +262,9 @@ export default function Controls({
                     <input
                       type="number"
                       value={inputValues.sigma2}
-                      onChange={(e) => handleParameterChange('sigma2', e.target.value)}
+                      onChange={(e) =>
+                        handleParameterChange('sigma2', e.target.value)
+                      }
                       min="0.1"
                       step="0.1"
                       className={getInputClass('sigma2')}
@@ -243,7 +277,9 @@ export default function Controls({
                   <input
                     type="number"
                     value={inputValues.proposalStdDev2}
-                    onChange={(e) => handleParameterChange('proposalStdDev2', e.target.value)}
+                    onChange={(e) =>
+                      handleParameterChange('proposalStdDev2', e.target.value)
+                    }
                     min="0.1"
                     step="0.1"
                     className={getInputClass('proposalStdDev2')}
@@ -273,7 +309,9 @@ export default function Controls({
                 disabled={isRunning}
               />
               {!inputValidity.p && (
-                <div className="text-xs text-red-600 mt-1">Enter a value between 0 and 1 (exclusive).</div>
+                <div className="text-xs text-red-600 mt-1">
+                  Enter a value between 0 and 1 (exclusive).
+                </div>
               )}
             </div>
 
@@ -281,12 +319,16 @@ export default function Controls({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="text-sm font-medium">Sample Size</label>
-                <span className="text-sm text-gray-600">{inputValues.sampleSize}</span>
+                <span className="text-sm text-gray-600">
+                  {inputValues.sampleSize}
+                </span>
               </div>
               <input
                 type="range"
                 value={inputValues.sampleSize}
-                onChange={(e) => handleParameterChange('sampleSize', e.target.value)}
+                onChange={(e) =>
+                  handleParameterChange('sampleSize', e.target.value)
+                }
                 min="10"
                 max="1000"
                 step="10"
@@ -304,11 +346,15 @@ export default function Controls({
             <h3 className="text-lg font-medium mb-3">Simulation</h3>
             <div className="space-y-3">
               <div className="flex items-center gap-3">
-                <label className="w-32 text-sm font-medium">Number of Steps</label>
+                <label className="w-32 text-sm font-medium">
+                  Number of Steps
+                </label>
                 <input
                   type="number"
                   value={inputValues.numSteps}
-                  onChange={(e) => handleParameterChange('numSteps', e.target.value)}
+                  onChange={(e) =>
+                    handleParameterChange('numSteps', e.target.value)
+                  }
                   min="100"
                   step="100"
                   className={getInputClass('numSteps')}
@@ -316,11 +362,15 @@ export default function Controls({
                 />
               </div>
               <div className="flex items-center gap-3">
-                <label className="w-32 text-sm font-medium">Burn-in Period</label>
+                <label className="w-32 text-sm font-medium">
+                  Burn-in Period
+                </label>
                 <input
                   type="number"
                   value={inputValues.burnIn}
-                  onChange={(e) => handleParameterChange('burnIn', e.target.value)}
+                  onChange={(e) =>
+                    handleParameterChange('burnIn', e.target.value)
+                  }
                   min="0"
                   step="10"
                   className={getInputClass('burnIn')}
@@ -335,7 +385,9 @@ export default function Controls({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="text-sm font-medium">Animation Speed</label>
-                <span className="text-sm text-gray-600">{parameters.delay}ms</span>
+                <span className="text-sm text-gray-600">
+                  {parameters.delay}ms
+                </span>
               </div>
               <input
                 type="range"
@@ -352,11 +404,13 @@ export default function Controls({
               </div>
             </div>
             <div className="flex gap-4 mt-2">
-              { /* Determine the label: Pause / Restart / Continue / Start */ }
+              {/* Determine the label: Pause / Restart / Continue / Start */}
               <button
                 onClick={handleMainButtonClick}
                 className={`flex-1 px-4 py-2 rounded text-white ${
-                  isRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
+                  isRunning
+                    ? 'bg-red-500 hover:bg-red-600'
+                    : 'bg-green-500 hover:bg-green-600'
                 }`}
               >
                 {isRunning
@@ -382,7 +436,10 @@ export default function Controls({
       <div className="mt-6">
         <h3 className="text-sm font-medium text-gray-600 mb-2">Progress</h3>
         <div className="w-full bg-gray-200 rounded h-2 overflow-hidden">
-          <div className="bg-blue-500 h-full" style={{ width: `${progressPercent.toFixed(1)}%` }} />
+          <div
+            className="bg-blue-500 h-full"
+            style={{ width: `${progressPercent.toFixed(1)}%` }}
+          />
         </div>
         <p className="text-xs text-gray-500 mt-1 text-right">
           {postBurnSteps}/{parameters.numSteps} samples
@@ -390,4 +447,4 @@ export default function Controls({
       </div>
     </div>
   );
-} 
+}

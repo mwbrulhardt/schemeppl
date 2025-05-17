@@ -1,7 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Parameters } from '@/hooks/useSimulator';
 import { Chart, ChartConfiguration, registerables } from 'chart.js';
-import annotationPlugin, { AnnotationOptions, AnnotationTypeRegistry } from 'chartjs-plugin-annotation';
+import annotationPlugin, {
+  AnnotationOptions,
+  AnnotationTypeRegistry,
+} from 'chartjs-plugin-annotation';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { calculateMean, kde } from '@/utils/stats';
 import Statistics from '@/components/Statistics';
@@ -44,7 +47,7 @@ const lineDataset = (
   label: string,
   color: string,
   dashed = false,
-  yAxisID = 'y',
+  yAxisID = 'y'
 ) => ({
   label,
   borderColor: color,
@@ -61,7 +64,7 @@ const baseOptions = (
   title: string,
   xLabel: string,
   yLabel: string,
-  extra: Record<string, unknown> = {},
+  extra: Record<string, unknown> = {}
 ) => ({
   responsive: true,
   maintainAspectRatio: false,
@@ -99,17 +102,21 @@ export default function Charts({ state, parameters }: ChartsProps) {
 
   const xVals = useMemo(() => {
     const { xMin, xMax } = xDomain();
-    return Array.from({ length: 100 }, (_, i) => xMin + ((xMax - xMin) * i) / 99);
+    return Array.from(
+      { length: 100 },
+      (_, i) => xMin + ((xMax - xMin) * i) / 99
+    );
   }, [xDomain]);
 
   /***** Chart initialisation helpers *****/
   const initChart = (
     id: string,
     chartRef: React.MutableRefObject<Chart | null>,
-    configFactory: () => ChartConfiguration,
+    configFactory: () => ChartConfiguration
   ) => {
     const ctx = document.getElementById(id) as HTMLCanvasElement | null;
-    if (ctx && !chartRef.current) chartRef.current = new Chart(ctx, configFactory());
+    if (ctx && !chartRef.current)
+      chartRef.current = new Chart(ctx, configFactory());
   };
 
   /***** Initialise charts (once) *****/
@@ -120,14 +127,18 @@ export default function Charts({ state, parameters }: ChartsProps) {
     /* μ₁ trace */
     initChart('component1-trace-chart', mu1TraceRef, () => ({
       type: 'line',
-      data: { datasets: [lineDataset('μ₁ Samples', 'rgba(255, 99, 132, 0.7)')] },
+      data: {
+        datasets: [lineDataset('μ₁ Samples', 'rgba(255, 99, 132, 0.7)')],
+      },
       options: baseOptions('μ₁ Trace Plot', 'Step', 'Value'),
     }));
 
     /* μ₂ trace */
     initChart('component2-trace-chart', mu2TraceRef, () => ({
       type: 'line',
-      data: { datasets: [lineDataset('μ₂ Samples', 'rgba(54, 162, 235, 0.7)')] },
+      data: {
+        datasets: [lineDataset('μ₂ Samples', 'rgba(54, 162, 235, 0.7)')],
+      },
       options: baseOptions('μ₂ Trace Plot', 'Step', 'Value'),
     }));
   }, [state]);
@@ -135,20 +146,22 @@ export default function Charts({ state, parameters }: ChartsProps) {
   /***** Update charts whenever state/parameters change *****/
   useEffect(() => {
     if (!state) return;
-    
+
     // If state has been updated with new data and labels, ensure the chart is updated
     const { xMin, xMax } = xDomain();
 
     // Calculate empirical means for each component - moved outside chart blocks
     const c1 = state.data.filter((_, index) => state.labels[index] === 1);
     const c2 = state.data.filter((_, index) => state.labels[index] === 0);
-    const empiricalMeans = { 
-      component1: calculateMean(c1), 
-      component2: calculateMean(c2) 
+    const empiricalMeans = {
+      component1: calculateMean(c1),
+      component2: calculateMean(c2),
     };
 
     /* -------- Distribution (target + densities + histogram) -------- */
-    const distributionCtx = document.getElementById('distribution-chart') as HTMLCanvasElement | null;
+    const distributionCtx = document.getElementById(
+      'distribution-chart'
+    ) as HTMLCanvasElement | null;
     if (!distributionCtx) return;
 
     // ---------------- Build datasets ----------------
@@ -158,8 +171,14 @@ export default function Charts({ state, parameters }: ChartsProps) {
     const targetDataset = lineDataset('Target', 'rgba(75, 192, 192, 1)');
     targetDataset.data = localXVals.map((x) => {
       const { mu1, mu2, sigma1, sigma2, p } = parameters;
-      const p1 = p * (1 / (sigma1 * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - mu1) / sigma1, 2));
-      const p2 = (1 - p) * (1 / (sigma2 * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - mu2) / sigma2, 2));
+      const p1 =
+        p *
+        (1 / (sigma1 * Math.sqrt(2 * Math.PI))) *
+        Math.exp(-0.5 * Math.pow((x - mu1) / sigma1, 2));
+      const p2 =
+        (1 - p) *
+        (1 / (sigma2 * Math.sqrt(2 * Math.PI))) *
+        Math.exp(-0.5 * Math.pow((x - mu2) / sigma2, 2));
       return { x, y: p1 + p2 };
     });
 
@@ -168,7 +187,10 @@ export default function Charts({ state, parameters }: ChartsProps) {
     const binWidth = (xMax - xMin) / numBins;
     const bins = Array(numBins).fill(0);
     for (const value of state.data ?? []) {
-      const binIndex = Math.min(Math.floor((value - xMin) / binWidth), numBins - 1);
+      const binIndex = Math.min(
+        Math.floor((value - xMin) / binWidth),
+        numBins - 1
+      );
       if (binIndex >= 0) bins[binIndex]++;
     }
     const total = state.data?.length ?? 0;
@@ -178,18 +200,34 @@ export default function Charts({ state, parameters }: ChartsProps) {
     }));
 
     // Posterior densities via KDE
-    const mu1Dataset = lineDataset('Posterior μ₁ Density', 'rgba(255, 99, 132, 0.7)', true, 'y2');
-    const mu2Dataset = lineDataset('Posterior μ₂ Density', 'rgba(54, 162, 235, 0.7)', true, 'y2');
+    const mu1Dataset = lineDataset(
+      'Posterior μ₁ Density',
+      'rgba(255, 99, 132, 0.7)',
+      true,
+      'y2'
+    );
+    const mu2Dataset = lineDataset(
+      'Posterior μ₂ Density',
+      'rgba(54, 162, 235, 0.7)',
+      true,
+      'y2'
+    );
 
     const mu1Samples = state.samples.mu1.slice(parameters.burnIn);
     const mu2Samples = state.samples.mu2.slice(parameters.burnIn);
 
     if (mu1Samples.length > 1) {
-      mu1Dataset.data = localXVals.map((x) => ({ x, y: kde(mu1Samples, x, 0.2) }));
+      mu1Dataset.data = localXVals.map((x) => ({
+        x,
+        y: kde(mu1Samples, x, 0.2),
+      }));
     }
 
     if (mu2Samples.length > 1) {
-      mu2Dataset.data = localXVals.map((x) => ({ x, y: kde(mu2Samples, x, 0.2) }));
+      mu2Dataset.data = localXVals.map((x) => ({
+        x,
+        y: kde(mu2Samples, x, 0.2),
+      }));
     }
 
     // ---------------- Annotation lines (empirical means) -------------
@@ -266,8 +304,16 @@ export default function Charts({ state, parameters }: ChartsProps) {
             annotation: { annotations: annotationConfig as any },
           },
           scales: {
-            x: { type: 'linear', min: xMin, max: xMax, title: { display: true, text: 'x' } },
-            y: { title: { display: true, text: 'Probability Density' }, position: 'left' },
+            x: {
+              type: 'linear',
+              min: xMin,
+              max: xMax,
+              title: { display: true, text: 'x' },
+            },
+            y: {
+              title: { display: true, text: 'Probability Density' },
+              position: 'left',
+            },
             y2: {
               title: { display: true, text: 'Posterior Density' },
               position: 'right',
@@ -281,7 +327,11 @@ export default function Charts({ state, parameters }: ChartsProps) {
       // Update datasets and scales efficiently
       const chart = distributionRef.current;
       chart.data.datasets = datasets as any;
-      chart.options.scales!.x = { ...chart.options.scales!.x as any, min: xMin, max: xMax };
+      chart.options.scales!.x = {
+        ...(chart.options.scales!.x as any),
+        min: xMin,
+        max: xMax,
+      };
       chart.options.plugins!.annotation!.annotations = annotationConfig as any;
       chart.update('none');
     }
@@ -292,7 +342,7 @@ export default function Charts({ state, parameters }: ChartsProps) {
     const computeCenterAndDelta = (
       samples: number[],
       fallbackCenter: number,
-      fallbackSigma: number,
+      fallbackSigma: number
     ) => {
       if (samples.length === 0) {
         // No empirical samples yet – fall back to ±3σ around the prior mean.
@@ -303,7 +353,8 @@ export default function Charts({ state, parameters }: ChartsProps) {
       const center = calculateMean(samples);
       const min = Math.min(...samples);
       const max = Math.max(...samples);
-      const delta = Math.max(Math.abs(min - center), Math.abs(max - center)) + 0.05;
+      const delta =
+        Math.max(Math.abs(min - center), Math.abs(max - center)) + 0.05;
       return { center, delta: delta * 1.01 } as const;
     };
 
@@ -314,12 +365,14 @@ export default function Charts({ state, parameters }: ChartsProps) {
       const { center, delta } = computeCenterAndDelta(
         state.samples.mu1,
         parameters.mu1,
-        parameters.sigma1,
+        parameters.sigma1
       );
 
       chart.data.datasets[0].data = state.samples.mu1.map((y, x) => ({ x, y }));
-      (chart.options.scales!.y as { min: number; max: number }).min = center - delta;
-      (chart.options.scales!.y as { min: number; max: number }).max = center + delta;
+      (chart.options.scales!.y as { min: number; max: number }).min =
+        center - delta;
+      (chart.options.scales!.y as { min: number; max: number }).max =
+        center + delta;
       chart.options.plugins!.annotation!.annotations = {
         meanLine: {
           type: 'line',
@@ -340,12 +393,14 @@ export default function Charts({ state, parameters }: ChartsProps) {
       const { center, delta } = computeCenterAndDelta(
         state.samples.mu2,
         parameters.mu2,
-        parameters.sigma2,
+        parameters.sigma2
       );
 
       chart.data.datasets[0].data = state.samples.mu2.map((y, x) => ({ x, y }));
-      (chart.options.scales!.y as { min: number; max: number }).min = center - delta;
-      (chart.options.scales!.y as { min: number; max: number }).max = center + delta;
+      (chart.options.scales!.y as { min: number; max: number }).min =
+        center - delta;
+      (chart.options.scales!.y as { min: number; max: number }).max =
+        center + delta;
       chart.options.plugins!.annotation!.annotations = {
         meanLine: {
           type: 'line',

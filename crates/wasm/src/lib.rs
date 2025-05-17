@@ -38,15 +38,25 @@ pub fn generate_data(
     let c2: Vec<f64> = (0..n).map(|_| component2.sample_dyn(&mut rng)).collect();
 
     let data: Vec<f64> = (0..n).map(|i| if z[i] { c1[i] } else { c2[i] }).collect();
-    
+
     // Convert to numeric values for JavaScript (0 = false, 1 = true)
     let z_numeric: Vec<u8> = z.iter().map(|&x| if x { 1 } else { 0 }).collect();
 
     // Create a JavaScript object with data and labels
     let result = js_sys::Object::new();
-    js_sys::Reflect::set(&result, &JsValue::from_str("data"), &Float64Array::from(&data[..]).into()).unwrap();
-    js_sys::Reflect::set(&result, &JsValue::from_str("labels"), &js_sys::Uint8Array::from(&z_numeric[..]).into()).unwrap();
-    
+    js_sys::Reflect::set(
+        &result,
+        &JsValue::from_str("data"),
+        &Float64Array::from(&data[..]).into(),
+    )
+    .unwrap();
+    js_sys::Reflect::set(
+        &result,
+        &JsValue::from_str("labels"),
+        &js_sys::Uint8Array::from(&z_numeric[..]).into(),
+    )
+    .unwrap();
+
     result.into()
 }
 

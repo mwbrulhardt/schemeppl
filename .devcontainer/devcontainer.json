@@ -12,7 +12,14 @@
     "customizations": {
       "vscode": {
         "settings": {
+          "editor.formatOnSave": true,
           "editor.defaultFormatter": "esbenp.prettier-vscode",
+          "[javascript]": {
+            "editor.defaultFormatter": "esbenp.prettier-vscode"
+          },
+          "[typescript]": {
+            "editor.defaultFormatter": "esbenp.prettier-vscode"
+          },
           // Forward SSH agent
           "remote.containers.forwardAgent": true
         },

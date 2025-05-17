@@ -19,13 +19,13 @@ import { zoomAndPanPlugin } from '@/lib/chart/zoomAndPanPlugin';
 
 // Register core elements + our custom plugin **once**
 Chart.register(
-    ScatterController,
-    PointElement,
-    LineElement,
-    LinearScale,
-    Tooltip,
-    Legend,
-    Filler,
+  ScatterController,
+  PointElement,
+  LineElement,
+  LinearScale,
+  Tooltip,
+  Legend,
+  Filler
 );
 
 interface Props {
@@ -101,49 +101,50 @@ export default function WalkVisualization({
   /* 2. Chart options                                                */
   /* --------------------------------------------------------------- */
   const options = useMemo(
-    () => ({
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: isRunning ? false : { duration: 300 },
-      interaction: { 
-        mode: 'point' as const, 
-        intersect: true 
-      },
-      scales: {
-        x: {
-          type: 'linear' as const,
-          min,
-          max,
-          title: { display: true, text: 'μ₁' },
-          grid: { color: '#e0e0e0' },
+    () =>
+      ({
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: isRunning ? false : { duration: 300 },
+        interaction: {
+          mode: 'point' as const,
+          intersect: true,
         },
-        y: {
-          type: 'linear' as const,
-          min,
-          max,
-          title: { display: true, text: 'μ₂' },
-          grid: { color: '#e0e0e0' },
+        scales: {
+          x: {
+            type: 'linear' as const,
+            min,
+            max,
+            title: { display: true, text: 'μ₁' },
+            grid: { color: '#e0e0e0' },
+          },
+          y: {
+            type: 'linear' as const,
+            min,
+            max,
+            title: { display: true, text: 'μ₂' },
+            grid: { color: '#e0e0e0' },
+          },
         },
-      },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          enabled: true,
-          position: 'nearest',
-          callbacks: {
-            title() {
-              return '';  // No title needed
-            },
-            label(ctx: TooltipItem<'scatter'>) {
-              const { x, y } = ctx.parsed;
-              const step = (ctx.raw as DataPoint)?.step ?? '?';
-              return `#${step} ${ctx.dataset.label}: (${x.toFixed(2)}, ${y.toFixed(2)})`;
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            enabled: true,
+            position: 'nearest',
+            callbacks: {
+              title() {
+                return ''; // No title needed
+              },
+              label(ctx: TooltipItem<'scatter'>) {
+                const { x, y } = ctx.parsed;
+                const step = (ctx.raw as DataPoint)?.step ?? '?';
+                return `#${step} ${ctx.dataset.label}: (${x.toFixed(2)}, ${y.toFixed(2)})`;
+              },
             },
           },
         },
-      },
-    } as ChartOptions<'scatter'>),
-    [isRunning, min, max],
+      }) as ChartOptions<'scatter'>,
+    [isRunning, min, max]
   );
 
   /* --------------------------------------------------------------- */
@@ -151,8 +152,14 @@ export default function WalkVisualization({
   /* --------------------------------------------------------------- */
   return (
     <div className="relative h-[600px] w-full max-w-4xl mx-auto bg-white rounded-lg shadow p-4">
-      <h2 className="text-xl font-semibold mb-4">Metropolis-Hastings Random Walk</h2>
-      <Scatter data={{ datasets }} options={options} plugins={[zoomAndPanPlugin]}/>
+      <h2 className="text-xl font-semibold mb-4">
+        Metropolis-Hastings Random Walk
+      </h2>
+      <Scatter
+        data={{ datasets }}
+        options={options}
+        plugins={[zoomAndPanPlugin]}
+      />
       <div className="absolute bottom-2 right-2 text-xs text-gray-500 bg-white/80 px-2 py-1 rounded">
         <span className="mr-2">🖱️ Scroll to zoom</span>
         <span>🖐️ Drag to pan</span>

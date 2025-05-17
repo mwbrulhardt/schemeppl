@@ -29,13 +29,12 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
-
 ## To Dos
 
 - Parameters
+
   - When parameters are changed, make sure that all of the UI elements are updated accordingly as well as removing leftover elements from other simulations
   - Make sure that the reset button is working correctly
-
 
 - Walk Visualization
   - Make sure axes are updated according to parameters
