@@ -1,12 +1,7 @@
 use js_sys::Float64Array;
 use wasm_bindgen::prelude::*;
 
-use ppl::{
-    parse_string,
-    GenerativeFunction,
-    Trace,
-    Value,
-};
+use ppl::{mh, parse_string, GenerativeFunction, Trace, Value};
 
 use ppl::distributions::DistributionExtended;
 
@@ -30,7 +25,7 @@ pub fn generate_data(
     p: f64,
     n: usize,
     seed: u64,
-) -> Vec<f64> {
+) -> JsValue {
     let mut rng = StdRng::seed_from_u64(seed);
 
     let z_dist = Bernoulli::new(p).unwrap();
@@ -43,20 +38,25 @@ pub fn generate_data(
     let c2: Vec<f64> = (0..n).map(|_| component2.sample_dyn(&mut rng)).collect();
 
     let data: Vec<f64> = (0..n).map(|i| if z[i] { c1[i] } else { c2[i] }).collect();
+    
+    // Convert to numeric values for JavaScript (0 = false, 1 = true)
+    let z_numeric: Vec<u8> = z.iter().map(|&x| if x { 1 } else { 0 }).collect();
 
-    data
+    // Create a JavaScript object with data and labels
+    let result = js_sys::Object::new();
+    js_sys::Reflect::set(&result, &JsValue::from_str("data"), &Float64Array::from(&data[..]).into()).unwrap();
+    js_sys::Reflect::set(&result, &JsValue::from_str("labels"), &js_sys::Uint8Array::from(&z_numeric[..]).into()).unwrap();
+    
+    result.into()
 }
 
-/// ----------------- JsGenerativeFunction -----------------------------------
 #[wasm_bindgen]
 pub struct JsGenerativeFunction {
     inner: GenerativeFunction,
 }
 
-
 #[wasm_bindgen]
 impl JsGenerativeFunction {
-
     #[wasm_bindgen(constructor)]
     pub fn new(src: String, scales: &Object, seed: u64) -> JsGenerativeFunction {
         log(&format!(
@@ -102,10 +102,7 @@ impl JsGenerativeFunction {
         selection: &js_sys::Array,
     ) -> Result<js_sys::Array, JsValue> {
         // convert JS array → HashSet<String>
-        let sel: HashSet<String> = selection
-            .iter()
-            .filter_map(|v| v.as_string())
-            .collect();
+        let sel: HashSet<String> = selection.iter().filter_map(|v| v.as_string()).collect();
 
         // call your Rust logic
         let (prop_trace, log_w) = self
@@ -121,8 +118,6 @@ impl JsGenerativeFunction {
     }
 }
 
-
-/// ----------------- JsTrace -------------------------------------------------
 #[wasm_bindgen]
 #[derive(Debug)]
 pub struct JsTrace {
@@ -139,7 +134,7 @@ impl JsTrace {
             .expect_float()
     }
 
-    /// Return the whole choice list as an object `{name: number, …}`.
+    /// Get the whole choice list as an object `{name: number, …}`.
     pub fn choices(&self) -> JsValue {
         let obj = js_sys::Object::new();
         for (k, v) in self.inner.get_choices().choices.iter() {
@@ -153,8 +148,33 @@ impl JsTrace {
         obj.into()
     }
 
+    /// Get the data used in the trace.
+    pub fn get_data(&self) -> Float64Array {
+        if let Value::List(data) = &self.inner.get_args()[0] {
+            let values: Vec<f64> = data.iter().map(|v| v.expect_float()).collect();
+            Float64Array::from(&values[..])
+        } else {
+            Float64Array::new_with_length(0)
+        }
+    }
+
     /// Un-normalised log-probability of the trace (handy for diagnostics).
     pub fn score(&self) -> f64 {
         self.inner.score
     }
+}
+
+#[wasm_bindgen]
+pub fn metropolis_hastings(
+    program: &JsGenerativeFunction,
+    trace: &JsTrace,
+    selection: &js_sys::Array,
+) -> Result<js_sys::Array, JsValue> {
+    let sel: HashSet<String> = selection.iter().filter_map(|v| v.as_string()).collect();
+    let (next, accepted) = mh(&program.inner, trace.inner.clone(), &sel)?;
+
+    let result = js_sys::Array::new();
+    result.push(&JsTrace { inner: next }.into());
+    result.push(&JsValue::from_bool(accepted));
+    Ok(result)
 }

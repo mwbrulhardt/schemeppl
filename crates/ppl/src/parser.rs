@@ -517,7 +517,7 @@ mod tests {
 
         let selection = HashSet::from_iter(vec!["mu1".to_string(), "mu2".to_string()]);
         for i in 0..n {
-            let (new_trace, weight) = mh(program.clone(), trace, selection.clone()).unwrap();
+            let (new_trace, weight) = mh(&program, trace, &selection).unwrap();
             if i % 10 == 0 {
                 if let Value::Float(mu1) = new_trace.get_choice(&"mu1".to_string()).value {
                     println!("Warmup step {}: mu1 = {}, weight = {}", i, mu1, weight);
@@ -532,7 +532,7 @@ mod tests {
         let mut samples_mu1 = Vec::new();
         let mut samples_mu2 = Vec::new();
         for i in 0..n {
-            let (new_trace, accepted) = mh(program.clone(), trace, selection.clone()).unwrap();
+            let (new_trace, accepted) = mh(&program, trace, &selection).unwrap();
             if i % 10 == 0 {
                 if let Value::Float(mu1) = new_trace.get_choice(&"mu1".to_string()).value {
                     println!("Sample step {}: mu = {}, accepted = {}", i, mu1, accepted);
@@ -647,7 +647,7 @@ mod tests {
 
         let selection = HashSet::from_iter(vec!["mu1".to_string(), "mu2".to_string()]);
         for i in 0..n {
-            let (new_trace, weight) = mh(program.clone(), trace, selection.clone()).unwrap();
+            let (new_trace, weight) = mh(&program, trace, &selection).unwrap();
             if i % 10 == 0 {
                 if let Value::Float(mu1) = new_trace.get_choice(&"mu1".to_string()).value {
                     println!("Warmup step {}: mu1 = {}, weight = {}", i, mu1, weight);
@@ -662,7 +662,7 @@ mod tests {
         let mut samples_mu1 = Vec::new();
         let mut samples_mu2 = Vec::new();
         for i in 0..n {
-            let (new_trace, accepted) = mh(program.clone(), trace, selection.clone()).unwrap();
+            let (new_trace, accepted) = mh(&program, trace, &selection).unwrap();
             if i % 10 == 0 {
                 if let Value::Float(mu1) = new_trace.get_choice(&"mu1".to_string()).value {
                     println!("Sample step {}: mu = {}, accepted = {}", i, mu1, accepted);

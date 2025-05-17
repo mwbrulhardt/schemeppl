@@ -1,17 +1,17 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { Parameters } from '@/hooks/useSimulator';
-import { Chart, registerables } from 'chart.js';
+import { Chart, ChartConfiguration, registerables } from 'chart.js';
 import annotationPlugin, { AnnotationOptions, AnnotationTypeRegistry } from 'chartjs-plugin-annotation';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { calculateMean, kde } from '@/utils/stats';
+import Statistics from '@/components/Statistics';
 
 Chart.register(...registerables, annotationPlugin);
 
-type AnnotationConfig = {
-  [key: string]: AnnotationOptions<keyof AnnotationTypeRegistry>;
-};
-
-
-
-interface SimulationState {
+/*****************************
+ * Types
+ *****************************/
+export interface SimulationState {
   mu1: number;
   mu2: number;
   acceptance_ratio: number;
@@ -22,6 +22,8 @@ interface SimulationState {
   steps: Array<{ mu1: number; mu2: number; accepted: boolean }>;
   distribution: Array<{ x: number; pdf: number }>;
   histogram: Array<{ x: number; frequency: number }>;
+  data: number[];
+  labels: number[];
 }
 
 interface ChartsProps {
@@ -29,531 +31,359 @@ interface ChartsProps {
   parameters: Parameters;
 }
 
-// Helper for kernel density estimation
-function kernelDensityEstimate(samples: number[], xVals: number[], bandwidth = 0.2) {
-  const norm = 1 / (Math.sqrt(2 * Math.PI) * bandwidth * samples.length);
-  return xVals.map(x => ({
-    x,
-    y: samples.reduce((sum, xi) => sum + Math.exp(-0.5 * Math.pow((x - xi) / bandwidth, 2)), 0) * norm
-  }));
-}
+type AnnotationConfig = {
+  [key: string]: AnnotationOptions<keyof AnnotationTypeRegistry>;
+};
+
+/*****************************
+ * Generic helpers
+ *****************************/
+
+/** Build a simple line‑style dataset */
+const lineDataset = (
+  label: string,
+  color: string,
+  dashed = false,
+  yAxisID = 'y',
+) => ({
+  label,
+  borderColor: color,
+  borderWidth: 2,
+  pointRadius: 0,
+  fill: false,
+  borderDash: dashed ? [2, 2] : undefined,
+  data: [] as { x: number; y: number }[],
+  yAxisID,
+});
+
+/** Shared chart options */
+const baseOptions = (
+  title: string,
+  xLabel: string,
+  yLabel: string,
+  extra: Record<string, unknown> = {},
+) => ({
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    title: { display: true, text: title },
+    tooltip: { mode: 'index' as const, intersect: false },
+    annotation: { annotations: {} },
+  },
+  scales: {
+    x: { type: 'linear' as const, title: { display: true, text: xLabel } },
+    y: { title: { display: true, text: yLabel } },
+    ...extra,
+  },
+  animation: { duration: 0 } as const,
+});
+
+/*****************************
+ * React component
+ *****************************/
 
 export default function Charts({ state, parameters }: ChartsProps) {
-  const distributionChartRef = useRef<Chart | null>(null);
-  const traceChartRef = useRef<Chart | null>(null);
-  const component1TraceChartRef = useRef<Chart | null>(null);
-  const component2TraceChartRef = useRef<Chart | null>(null);
-  const mu1DensityChartRef = useRef<Chart | null>(null);
-  const mu2DensityChartRef = useRef<Chart | null>(null);
+  /***** Refs *****/
+  const distributionRef = useRef<Chart | null>(null);
+  const mu1TraceRef = useRef<Chart | null>(null);
+  const mu2TraceRef = useRef<Chart | null>(null);
 
-  // Initialize charts
+  /***** Derived helpers *****/
+  const xDomain = useCallback(() => {
+    const { mu1, mu2, sigma1, sigma2 } = parameters;
+    return {
+      xMin: Math.min(mu1, mu2) - 2.5 * sigma1,
+      xMax: Math.max(mu1, mu2) + 2.5 * sigma2,
+    } as const;
+  }, [parameters]);
+
+  const xVals = useMemo(() => {
+    const { xMin, xMax } = xDomain();
+    return Array.from({ length: 100 }, (_, i) => xMin + ((xMax - xMin) * i) / 99);
+  }, [xDomain]);
+
+  /***** Chart initialisation helpers *****/
+  const initChart = (
+    id: string,
+    chartRef: React.MutableRefObject<Chart | null>,
+    configFactory: () => ChartConfiguration,
+  ) => {
+    const ctx = document.getElementById(id) as HTMLCanvasElement | null;
+    if (ctx && !chartRef.current) chartRef.current = new Chart(ctx, configFactory());
+  };
+
+  /***** Initialise charts (once) *****/
   useEffect(() => {
+    // Only initialize charts when we have state data
     if (!state) return;
 
-    // Distribution chart
-    const distributionCtx = document.getElementById('distribution-chart') as HTMLCanvasElement;
-    if (distributionCtx && !distributionChartRef.current) {
-      distributionChartRef.current = new Chart(distributionCtx, {
+    /* μ₁ trace */
+    initChart('component1-trace-chart', mu1TraceRef, () => ({
+      type: 'line',
+      data: { datasets: [lineDataset('μ₁ Samples', 'rgba(255, 99, 132, 0.7)')] },
+      options: baseOptions('μ₁ Trace Plot', 'Step', 'Value'),
+    }));
+
+    /* μ₂ trace */
+    initChart('component2-trace-chart', mu2TraceRef, () => ({
+      type: 'line',
+      data: { datasets: [lineDataset('μ₂ Samples', 'rgba(54, 162, 235, 0.7)')] },
+      options: baseOptions('μ₂ Trace Plot', 'Step', 'Value'),
+    }));
+  }, [state]);
+
+  /***** Update charts whenever state/parameters change *****/
+  useEffect(() => {
+    if (!state) return;
+    
+    // If state has been updated with new data and labels, ensure the chart is updated
+    const { xMin, xMax } = xDomain();
+
+    // Calculate empirical means for each component - moved outside chart blocks
+    const c1 = state.data.filter((_, index) => state.labels[index] === 1);
+    const c2 = state.data.filter((_, index) => state.labels[index] === 0);
+    const empiricalMeans = { 
+      component1: calculateMean(c1), 
+      component2: calculateMean(c2) 
+    };
+
+    /* -------- Distribution (target + densities + histogram) -------- */
+    const distributionCtx = document.getElementById('distribution-chart') as HTMLCanvasElement | null;
+    if (!distributionCtx) return;
+
+    // ---------------- Build datasets ----------------
+    const localXVals = xVals;
+
+    // Target density
+    const targetDataset = lineDataset('Target', 'rgba(75, 192, 192, 1)');
+    targetDataset.data = localXVals.map((x) => {
+      const { mu1, mu2, sigma1, sigma2, p } = parameters;
+      const p1 = p * (1 / (sigma1 * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - mu1) / sigma1, 2));
+      const p2 = (1 - p) * (1 / (sigma2 * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - mu2) / sigma2, 2));
+      return { x, y: p1 + p2 };
+    });
+
+    // Histogram
+    const numBins = 30;
+    const binWidth = (xMax - xMin) / numBins;
+    const bins = Array(numBins).fill(0);
+    for (const value of state.data ?? []) {
+      const binIndex = Math.min(Math.floor((value - xMin) / binWidth), numBins - 1);
+      if (binIndex >= 0) bins[binIndex]++;
+    }
+    const total = state.data?.length ?? 0;
+    const histogramData = bins.map((count: number, i: number) => ({
+      x: xMin + (i + 0.5) * binWidth,
+      y: total ? count / (total * binWidth) : 0,
+    }));
+
+    // Posterior densities via KDE
+    const mu1Dataset = lineDataset('Posterior μ₁ Density', 'rgba(255, 99, 132, 0.7)', true, 'y2');
+    const mu2Dataset = lineDataset('Posterior μ₂ Density', 'rgba(54, 162, 235, 0.7)', true, 'y2');
+
+    const mu1Samples = state.samples.mu1.slice(parameters.burnIn);
+    const mu2Samples = state.samples.mu2.slice(parameters.burnIn);
+
+    if (mu1Samples.length > 1) {
+      mu1Dataset.data = localXVals.map((x) => ({ x, y: kde(mu1Samples, x, 0.2) }));
+    }
+
+    if (mu2Samples.length > 1) {
+      mu2Dataset.data = localXVals.map((x) => ({ x, y: kde(mu2Samples, x, 0.2) }));
+    }
+
+    // ---------------- Annotation lines (empirical means) -------------
+    const annotationConfig: AnnotationConfig = {};
+    if (c1.length > 0) {
+      annotationConfig.component1Mean = {
         type: 'line',
-        data: {
-          datasets: [
-            {
-              label: 'Target GMM',
-              borderColor: 'rgba(75, 192, 192, 1)',
-              borderWidth: 2,
-              pointRadius: 0,
-              fill: false,
-              data: [],
-              yAxisID: 'y',
-            },
-            {
-              label: 'Posterior μ₁ Density',
-              borderColor: 'rgba(255, 99, 132, 0.7)',
-              borderWidth: 2,
-              pointRadius: 0,
-              fill: false,
-              borderDash: [2, 2],
-              data: [],
-              yAxisID: 'y2',
-            },
-            {
-              label: 'Posterior μ₂ Density',
-              borderColor: 'rgba(54, 162, 235, 0.7)',
-              borderWidth: 2,
-              pointRadius: 0,
-              fill: false,
-              borderDash: [2, 2],
-              data: [],
-              yAxisID: 'y2',
-            }
-          ]
-        },
+        xMin: empiricalMeans.component1,
+        xMax: empiricalMeans.component1,
+        borderColor: 'rgba(255, 99, 132, 1)',
+        borderWidth: 2,
+        label: {
+          display: true,
+          content: `μ₁: ${empiricalMeans.component1.toFixed(2)}`,
+          position: 'end', // show at top-right of line
+          backgroundColor: 'rgba(255, 99, 132, 0.7)',
+          color: 'white',
+          font: { size: 10, weight: 'normal' },
+          padding: { x: 4, y: 2 },
+          yAdjust: 3,
+          xAdjust: 25,
+        } as any,
+      };
+    }
+    if (c2.length > 0) {
+      annotationConfig.component2Mean = {
+        type: 'line',
+        xMin: empiricalMeans.component2,
+        xMax: empiricalMeans.component2,
+        borderColor: 'rgba(54, 162, 235, 1)',
+        borderWidth: 2,
+        label: {
+          display: true,
+          content: `μ₂: ${empiricalMeans.component2.toFixed(2)}`,
+          position: 'end',
+          backgroundColor: 'rgba(54, 162, 235, 0.7)',
+          color: 'white',
+          font: { size: 10, weight: 'normal' },
+          padding: { x: 4, y: 2 },
+          yAdjust: 3,
+          xAdjust: 25,
+        } as any,
+      };
+    }
+
+    const datasets = [
+      targetDataset,
+      mu1Dataset,
+      mu2Dataset,
+      {
+        label: 'Empirical Distribution',
+        type: 'bar',
+        backgroundColor: 'rgba(128, 128, 128, 0.3)',
+        borderColor: 'rgba(128, 128, 128, 0.3)',
+        borderWidth: 0,
+        data: histogramData,
+        yAxisID: 'y',
+        barPercentage: 1,
+        categoryPercentage: 1,
+      },
+    ];
+
+    /* Create once, update thereafter */
+    if (!distributionRef.current) {
+      distributionRef.current = new Chart(distributionCtx, {
+        type: 'line',
+        data: { datasets: datasets as any },
         options: {
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            title: {
-              display: true,
-              text: 'GMM Distribution vs. Samples'
-            },
-            tooltip: {
-              mode: 'index',
-              intersect: false
-            },
-            annotation: {
-              annotations: {}
-            }
+            title: { display: true, text: 'GMM Distribution vs. Samples' },
+            tooltip: { mode: 'index', intersect: false },
+            annotation: { annotations: annotationConfig as any },
           },
           scales: {
-            x: {
-              type: 'linear',
-              title: {
-                display: true,
-                text: 'x'
-              },
-              min: -4,
-              max: 4
-            },
-            y: {
-              title: {
-                display: true,
-                text: 'Probability Density'
-              },
-              position: 'left',
-            },
+            x: { type: 'linear', min: xMin, max: xMax, title: { display: true, text: 'x' } },
+            y: { title: { display: true, text: 'Probability Density' }, position: 'left' },
             y2: {
-              title: {
-                display: true,
-                text: 'Posterior Density'
-              },
+              title: { display: true, text: 'Posterior Density' },
               position: 'right',
-              grid: {
-                drawOnChartArea: false
-              }
-            }
-          },
-          animation: false
-        }
-      });
-    }
-
-    // Trace chart
-    const traceCtx = document.getElementById('trace-chart') as HTMLCanvasElement;
-    if (traceCtx && !traceChartRef.current) {
-      traceChartRef.current = new Chart(traceCtx, {
-        type: 'line',
-        data: {
-          datasets: [
-            {
-              label: 'μ₁ Samples',
-              borderColor: 'rgba(75, 192, 192, 1)',
-              borderWidth: 2,
-              pointRadius: 0,
-              fill: false,
-              data: []
+              grid: { drawOnChartArea: false },
             },
-            {
-              label: 'μ₂ Samples',
-              borderColor: 'rgba(255, 99, 132, 1)',
-              borderWidth: 2,
-              pointRadius: 0,
-              fill: false,
-              data: []
-            }
-          ]
+          },
+          animation: { duration: 0 },
         },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            title: {
-              display: true,
-              text: 'Full Trace Plot'
-            },
-            tooltip: {
-              mode: 'index',
-              intersect: false
-            },
-            annotation: {
-              annotations: {}
-            }
-          },
-          scales: {
-            x: {
-              type: 'linear',
-              title: {
-                display: true,
-                text: 'Step'
-              },
-              min: 0
-            },
-            y: {
-              title: {
-                display: true,
-                text: 'Value'
-              }
-            }
-          },
-          animation: false
-        }
       });
+    } else {
+      // Update datasets and scales efficiently
+      const chart = distributionRef.current;
+      chart.data.datasets = datasets as any;
+      chart.options.scales!.x = { ...chart.options.scales!.x as any, min: xMin, max: xMax };
+      chart.options.plugins!.annotation!.annotations = annotationConfig as any;
+      chart.update('none');
     }
 
-    // Component 1 trace chart
-    const component1TraceCtx = document.getElementById('component1-trace-chart') as HTMLCanvasElement;
-    if (component1TraceCtx && !component1TraceChartRef.current) {
-      component1TraceChartRef.current = new Chart(component1TraceCtx, {
-        type: 'line',
-        data: {
-          datasets: [{
-            label: 'μ₁ Samples',
-            borderColor: 'rgba(255, 99, 132, 1)',
-            borderWidth: 2,
-            pointRadius: 0,
-            fill: false,
-            data: []
-          }]
+    // Compute a sensible centre (mean) and symmetric range (delta) for the y–axis.
+    // When samples are available we use them; otherwise we fall back to the
+    // corresponding prior parameters so that the axis still has reasonable ticks.
+    const computeCenterAndDelta = (
+      samples: number[],
+      fallbackCenter: number,
+      fallbackSigma: number,
+    ) => {
+      if (samples.length === 0) {
+        // No empirical samples yet – fall back to ±3σ around the prior mean.
+        const delta = Math.max(3 * fallbackSigma, 1);
+        return { center: fallbackCenter, delta } as const;
+      }
+
+      const center = calculateMean(samples);
+      const min = Math.min(...samples);
+      const max = Math.max(...samples);
+      const delta = Math.max(Math.abs(min - center), Math.abs(max - center)) + 0.05;
+      return { center, delta: delta * 1.01 } as const;
+    };
+
+    /* ---------- μ₁ Trace ---------- */
+    if (mu1TraceRef.current) {
+      const chart = mu1TraceRef.current;
+
+      const { center, delta } = computeCenterAndDelta(
+        state.samples.mu1,
+        parameters.mu1,
+        parameters.sigma1,
+      );
+
+      chart.data.datasets[0].data = state.samples.mu1.map((y, x) => ({ x, y }));
+      (chart.options.scales!.y as { min: number; max: number }).min = center - delta;
+      (chart.options.scales!.y as { min: number; max: number }).max = center + delta;
+      chart.options.plugins!.annotation!.annotations = {
+        meanLine: {
+          type: 'line',
+          yMin: center,
+          yMax: center,
+          borderColor: 'rgba(128, 128, 128, 1)',
+          borderWidth: 3,
+          borderDash: [5, 5],
         },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            title: {
-              display: true,
-              text: 'μ₁ Trace Plot'
-            },
-            tooltip: {
-              mode: 'index',
-              intersect: false
-            },
-            annotation: {
-              annotations: {}
-            }
-          },
-          scales: {
-            x: {
-              type: 'linear',
-              title: {
-                display: true,
-                text: 'Step'
-              },
-              min: 0
-            },
-            y: {
-              title: {
-                display: true,
-                text: 'Value'
-              },
-              min: parameters.mu1 - 0.5,
-              max: parameters.mu1 + 0.5
-            }
-          },
-          animation: false
-        }
-      });
+      } as AnnotationConfig;
+      chart.update();
     }
 
-    // Component 2 trace chart
-    const component2TraceCtx = document.getElementById('component2-trace-chart') as HTMLCanvasElement;
-    if (component2TraceCtx && !component2TraceChartRef.current) {
-      component2TraceChartRef.current = new Chart(component2TraceCtx, {
-        type: 'line',
-        data: {
-          datasets: [{
-            label: 'μ₂ Samples',
-            borderColor: 'rgba(54, 162, 235, 1)',
-            borderWidth: 2,
-            pointRadius: 0,
-            fill: false,
-            data: []
-          }]
+    /* ---------- μ₂ Trace ---------- */
+    if (mu2TraceRef.current) {
+      const chart = mu2TraceRef.current;
+
+      const { center, delta } = computeCenterAndDelta(
+        state.samples.mu2,
+        parameters.mu2,
+        parameters.sigma2,
+      );
+
+      chart.data.datasets[0].data = state.samples.mu2.map((y, x) => ({ x, y }));
+      (chart.options.scales!.y as { min: number; max: number }).min = center - delta;
+      (chart.options.scales!.y as { min: number; max: number }).max = center + delta;
+      chart.options.plugins!.annotation!.annotations = {
+        meanLine: {
+          type: 'line',
+          yMin: center,
+          yMax: center,
+          borderColor: 'rgba(128, 128, 128, 1)',
+          borderWidth: 3,
+          borderDash: [5, 5],
         },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            title: {
-              display: true,
-              text: 'μ₂ Trace Plot'
-            },
-            tooltip: {
-              mode: 'index',
-              intersect: false
-            },
-            annotation: {
-              annotations: {}
-            }
-          },
-          scales: {
-            x: {
-              type: 'linear',
-              title: {
-                display: true,
-                text: 'Step'
-              },
-              min: 0
-            },
-            y: {
-              title: {
-                display: true,
-                text: 'Value'
-              },
-              min: parameters.mu2 - 0.5,
-              max: parameters.mu2 + 0.5
-            }
-          },
-          animation: false
-        }
-      });
+      } as AnnotationConfig;
+      chart.update();
     }
+  }, [state, parameters, xVals, xDomain]);
 
-    // μ₁ density chart
-    const mu1DensityCtx = document.getElementById('mu1-density-chart') as HTMLCanvasElement;
-    if (mu1DensityCtx && !mu1DensityChartRef.current) {
-      mu1DensityChartRef.current = new Chart(mu1DensityCtx, {
-        type: 'line',
-        data: {
-          datasets: [{
-            label: 'Posterior Density μ₁',
-            borderColor: 'rgba(255, 99, 132, 1)',
-            borderWidth: 2,
-            pointRadius: 0,
-            fill: false,
-            data: []
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            title: {
-              display: true,
-              text: 'Posterior Density of μ₁'
-            }
-          },
-          scales: {
-            x: {
-              type: 'linear',
-              title: {
-                display: true,
-                text: 'μ₁'
-              }
-            },
-            y: {
-              title: {
-                display: true,
-                text: 'Density'
-              }
-            }
-          },
-          animation: false
-        }
-      });
-    }
-
-    // μ₂ density chart
-    const mu2DensityCtx = document.getElementById('mu2-density-chart') as HTMLCanvasElement;
-    if (mu2DensityCtx && !mu2DensityChartRef.current) {
-      mu2DensityChartRef.current = new Chart(mu2DensityCtx, {
-        type: 'line',
-        data: {
-          datasets: [{
-            label: 'Posterior Density μ₂',
-            borderColor: 'rgba(54, 162, 235, 1)',
-            borderWidth: 2,
-            pointRadius: 0,
-            fill: false,
-            data: []
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            title: {
-              display: true,
-              text: 'Posterior Density of μ₂'
-            }
-          },
-          scales: {
-            x: {
-              type: 'linear',
-              title: {
-                display: true,
-                text: 'μ₂'
-              }
-            },
-            y: {
-              title: {
-                display: true,
-                text: 'Density'
-              }
-            }
-          },
-          animation: false
-        }
-      });
-    }
-  }, [parameters.mu1, parameters.mu2, state]);
-
-  // Update charts when state or parameters change
-  useEffect(() => {
-    if (!state) return;
-
-    // Update distribution chart
-    if (distributionChartRef.current) {
-      // Use a dynamic x grid for all curves based on the current domain
-      const xMin = Math.min(parameters.mu1, parameters.mu2) - 2.5*parameters.sigma1;
-      const xMax = Math.max(parameters.mu1, parameters.mu2) + 2.5*parameters.sigma2;
-      const xVals = Array.from({ length: 100 }, (_, i) => xMin + (xMax - xMin) * i / 99);
-      if (distributionChartRef.current?.options?.scales?.x) {
-        distributionChartRef.current.options.scales.x.min = xMin;
-        distributionChartRef.current.options.scales.x.max = xMax;
-      }
-
-      // Target GMM (dynamic domain)
-      distributionChartRef.current.data.datasets[0].data = xVals.map(x => {
-        const p1 = parameters.p * (1 / Math.sqrt(2 * Math.PI * parameters.sigma1)) * Math.exp(-0.5 * Math.pow((x - parameters.mu1) / Math.sqrt(parameters.sigma1), 2));
-        const p2 = (1 - parameters.p) * (1 / Math.sqrt(2 * Math.PI * parameters.sigma2)) * Math.exp(-0.5 * Math.pow((x - parameters.mu2) / Math.sqrt(parameters.sigma2), 2));
-        return { x, y: p1 + p2 };
-      });
-
-      // Posterior μ₁ density (kernel density estimate)
-      const mu1Samples = state.samples.mu1.slice(parameters.burnIn);
-      if (mu1Samples.length > 1) {
-        const density = kernelDensityEstimate(mu1Samples, xVals);
-        distributionChartRef.current.data.datasets[1].data = density;
-      } else {
-        distributionChartRef.current.data.datasets[1].data = [];
-      }
-
-      // Posterior μ₂ density (kernel density estimate)
-      const mu2Samples = state.samples.mu2.slice(parameters.burnIn);
-      if (mu2Samples.length > 1) {
-        const density = kernelDensityEstimate(mu2Samples, xVals);
-        distributionChartRef.current.data.datasets[2].data = density;
-      } else {
-        distributionChartRef.current.data.datasets[2].data = [];
-      }
-
-      // Update annotations
-      if (distributionChartRef.current?.options?.plugins?.annotation) {
-        distributionChartRef.current.options.plugins.annotation.annotations = {};
-      }
-      distributionChartRef.current.update();
-    }
-
-    // Update trace charts
-    if (traceChartRef.current) {
-      const mu1Samples = state.samples.mu1
-        .map((value, index) => ({ x: index, y: value }));
-      const mu2Samples = state.samples.mu2
-        .map((value, index) => ({ x: index, y: value }));
-      
-      // Update y-axis scale based on means
-      const delta1 = 1.5*parameters.sigma1;
-      const delta2 = 1.5*parameters.sigma2;
-      const yMin = Math.min(parameters.mu1 - delta1, parameters.mu2 - delta2);
-      const yMax = Math.max(parameters.mu1 + delta1, parameters.mu2 + delta2);
-      if (traceChartRef.current?.options?.scales?.y) {
-        traceChartRef.current.options.scales.y.min = yMin;
-        traceChartRef.current.options.scales.y.max = yMax;
-      }
-
-      traceChartRef.current.data.datasets[0].data = mu1Samples;
-      traceChartRef.current.data.datasets[1].data = mu2Samples;
-      
-      if (traceChartRef.current?.options?.plugins?.annotation) {
-        traceChartRef.current.options.plugins.annotation.annotations = {
-          mean1Line: {
-            type: 'line',
-            yMin: parameters.mu1,
-            yMax: parameters.mu1,
-            borderColor: 'green',
-            borderWidth: 2,
-            borderDash: [5, 5]
-          },
-          mean2Line: {
-            type: 'line',
-            yMin: parameters.mu2,
-            yMax: parameters.mu2,
-            borderColor: 'orange',
-            borderWidth: 2,
-            borderDash: [5, 5]
-          }
-        } as AnnotationConfig;
-      }
-      traceChartRef.current.update();
-    }
-
-    // Update component trace charts
-    if (component1TraceChartRef.current) {
-      component1TraceChartRef.current.data.datasets[0].data = state.samples.mu1
-        .map((value, index) => ({ x: index, y: value }));
-
-      // Update y-axis scale for component 1
-      if (component1TraceChartRef.current?.options?.scales?.y) {
-        const delta = 1.5*parameters.sigma1;
-        component1TraceChartRef.current.options.scales.y.min = parameters.mu1 - delta;
-        component1TraceChartRef.current.options.scales.y.max = parameters.mu1 + delta;
-      }
-
-      if (component1TraceChartRef.current.options?.plugins?.annotation) {
-        component1TraceChartRef.current.options.plugins.annotation.annotations = {
-          meanLine: {
-            type: 'line',
-            yMin: parameters.mu1,
-            yMax: parameters.mu1,
-            borderColor: 'green',
-            borderWidth: 2,
-            borderDash: [5, 5]
-          }
-        } as AnnotationConfig;
-      }
-      component1TraceChartRef.current.update();
-    }
-
-    if (component2TraceChartRef.current) {
-      component2TraceChartRef.current.data.datasets[0].data = state.samples.mu2
-        .map((value, index) => ({ x: index, y: value }));
-
-      // Update y-axis scale for component 2
-      if (component2TraceChartRef.current?.options?.scales?.y) {
-        const delta = 1.5*parameters.sigma2;
-        component2TraceChartRef.current.options.scales.y.min = parameters.mu2 - delta;
-        component2TraceChartRef.current.options.scales.y.max = parameters.mu2 + delta;
-      }
-
-      if (component2TraceChartRef.current.options?.plugins?.annotation) {
-        component2TraceChartRef.current.options.plugins.annotation.annotations = {
-          meanLine: {
-            type: 'line',
-            yMin: parameters.mu2,
-            yMax: parameters.mu2,
-            borderColor: 'orange',
-            borderWidth: 2,
-            borderDash: [5, 5]
-          }
-        } as AnnotationConfig;
-      }
-      component2TraceChartRef.current.update();
-    }
-  }, [state, parameters]);
-
+  /***** Render *****/
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 w-full">
-      <div className="bg-white p-4 rounded-lg shadow w-full">
-        <canvas id="distribution-chart" className="w-full h-[400px]"></canvas>
+    <div className="w-full space-y-8">
+      {/* Distribution plot + Statistics side-by-side */}
+      <div className="grid w-full grid-cols-4 gap-8">
+        {/* 25% width for statistics */}
+        <div className="col-span-1 w-full">
+          <Statistics state={state} />
+        </div>
+        {/* 75% width for distribution plot */}
+        <div className="col-span-3 w-full rounded-lg bg-white p-4 shadow">
+          <canvas id="distribution-chart" className="h-[400px] w-full" />
+        </div>
       </div>
-      <div className="bg-white p-4 rounded-lg shadow w-full">
-        <canvas id="trace-chart" className="w-full h-[400px]"></canvas>
-      </div>
-      <div className="bg-white p-4 rounded-lg shadow w-full">
-        <canvas id="component1-trace-chart" className="w-full h-[400px]"></canvas>
-      </div>
-      <div className="bg-white p-4 rounded-lg shadow w-full">
-        <canvas id="component2-trace-chart" className="w-full h-[400px]"></canvas>
+
+      {/* Trace plots */}
+      <div className="grid w-full grid-cols-1 gap-8 lg:grid-cols-2">
+        <div className="w-full rounded-lg bg-white p-4 shadow">
+          <canvas id="component1-trace-chart" className="h-[400px] w-full" />
+        </div>
+        <div className="w-full rounded-lg bg-white p-4 shadow">
+          <canvas id="component2-trace-chart" className="h-[400px] w-full" />
+        </div>
       </div>
     </div>
   );
-} 
+}

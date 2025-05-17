@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use rand::distributions::{Bernoulli, Distribution};
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 use statrs::distribution::Normal;
 
 use ppl::{mh, r#gen, Expression, GenerativeFunction, Literal, Value};
@@ -47,7 +49,7 @@ fn test_univariate_gaussian_no_parse() {
 
     let selection = HashSet::from_iter(vec!["mu".to_string()]);
     for i in 0..100 {
-        let (new_trace, weight) = mh(program.clone(), trace, selection.clone()).unwrap();
+        let (new_trace, weight) = mh(&program, trace, &selection).unwrap();
         if i % 10 == 0 {
             if let Value::Float(mu) = new_trace.get_choice(&"mu".to_string()).value {
                 println!("Warmup step {}: mu = {}, weight = {}", i, mu, weight);
@@ -58,7 +60,7 @@ fn test_univariate_gaussian_no_parse() {
 
     let mut samples = Vec::new();
     for i in 0..100 {
-        let (new_trace, accepted) = mh(program.clone(), trace, selection.clone()).unwrap();
+        let (new_trace, accepted) = mh(&program, trace, &selection).unwrap();
         if i % 10 == 0 {
             if let Value::Float(mu) = new_trace.get_choice(&"mu".to_string()).value {
                 println!("Sample step {}: mu = {}, accepted = {}", i, mu, accepted);
@@ -208,7 +210,7 @@ fn test_gmm_no_parse() {
 
     let selection = HashSet::from_iter(vec!["mu1".to_string(), "mu2".to_string()]);
     for i in 0..n {
-        let (new_trace, weight) = mh(program.clone(), trace, selection.clone()).unwrap();
+        let (new_trace, weight) = mh(&program, trace, &selection).unwrap();
         if i % 10 == 0 {
             if let Value::Float(mu1) = new_trace.get_choice(&"mu1".to_string()).value {
                 println!("Warmup step {}: mu1 = {}, weight = {}", i, mu1, weight);
@@ -223,7 +225,7 @@ fn test_gmm_no_parse() {
     let mut samples_mu1 = Vec::new();
     let mut samples_mu2 = Vec::new();
     for i in 0..n {
-        let (new_trace, accepted) = mh(program.clone(), trace, selection.clone()).unwrap();
+        let (new_trace, accepted) = mh(&program, trace, &selection).unwrap();
         if i % 10 == 0 {
             if let Value::Float(mu1) = new_trace.get_choice(&"mu1".to_string()).value {
                 println!("Sample step {}: mu = {}, accepted = {}", i, mu1, accepted);
@@ -279,12 +281,17 @@ fn test_gmm_no_parse() {
 
 #[test]
 fn test_gmm_parse() {
-    let mut rng = rand::thread_rng();
+    const SEED: u64 = 42;
+    const BURN_IN: usize = 2_000;
+    const DRAW: usize = 2_000;
+    const PROP_SD: f64 = 0.15;
 
-    let n = 1000;
-    let num_samples = 200;
-    let mu1 = 1.0;
-    let mu2 = -1.0;
+    let data_seed = 40;
+    let mut rng = StdRng::seed_from_u64(data_seed);
+
+    let num_samples = 500;
+    let mu1 = -2.0;
+    let mu2 = 2.0;
     let sigma = 1.0;
     let p = 0.5;
     let z_dist = Bernoulli::new(p).unwrap();
@@ -303,7 +310,7 @@ fn test_gmm_parse() {
     let data: Vec<f64> = (0..num_samples)
         .map(|i| if z[i] { c1[i] } else { c2[i] })
         .collect();
-    let wrapped_data = Value::List(data.into_iter().map(|x| Value::Float(x)).collect());
+    let wrapped_data = Value::List(data.clone().into_iter().map(|x| Value::Float(x)).collect());
 
     let model = gen!(
         // Priors
@@ -326,37 +333,31 @@ fn test_gmm_parse() {
     let mu2_name = "mu2".to_string();
 
     let mut scales = HashMap::new();
-    scales.insert(mu1_name.clone(), 1.0);
-    scales.insert(mu2_name.clone(), 1.0);
+    scales.insert(mu1_name.clone(), PROP_SD);
+    scales.insert(mu2_name.clone(), PROP_SD);
 
-    let program = GenerativeFunction::new(model, vec!["data".to_string()], scales, 42);
-
-    let mut trace = program.simulate(vec![wrapped_data]).unwrap();
-
-    // Print initial mu
-    let mu1 = trace.get_choice(&mu1_name).value.expect_float();
-    let mu2 = trace.get_choice(&mu2_name).value.expect_float();
-
-    println!("Initial mu1: {}", mu1);
-    println!("Initial mu2: {}", mu2);
+    let program = GenerativeFunction::new(model, vec!["data".to_string()], scales, SEED);
 
     let selection = HashSet::from_iter(vec![mu1_name.clone(), mu2_name.clone()]);
-    for _ in 0..n {
-        let (new_trace, _) = mh(program.clone(), trace, selection.clone()).unwrap();
-        trace = new_trace;
+    let mut trace = program.simulate(vec![wrapped_data]).unwrap();
+    for _ in 0..BURN_IN {
+        let (t, _) = mh(&program, trace, &selection).unwrap();
+        trace = t;
     }
 
-    let mut history = Vec::new();
-    let mut num_accepted = 0;
-    for _ in 0..n {
-        let (new_trace, accepted) = mh(program.clone(), trace, selection.clone()).unwrap();
+    let mut history = Vec::with_capacity(DRAW);
+    let mut num_accepted = 0u32;
 
-        history.push(new_trace.clone());
-        trace = new_trace;
-        num_accepted += accepted as u32;
+    for _ in 0..DRAW {
+        let (t, accepted) = mh(&program, trace, &selection).unwrap();
+        trace = t;
+        if accepted {
+            num_accepted += 1;
+        }
+        history.push(trace.clone());
     }
 
-    println!("Acceptence Rate: {:.3}", num_accepted as f64 / n as f64);
+    println!("Acceptence Rate: {:.3}", num_accepted as f64 / DRAW as f64);
 
     let mean_mu1: f64 = history
         .iter()
@@ -390,9 +391,9 @@ fn test_gmm_parse() {
         mean_mu2, variance_mu2
     );
 
-    assert!((mean_mu1 + 1.0).abs() < 0.5);
+    assert!((mean_mu1 - mu1).abs() < 0.5);
     assert!(variance_mu1 > 0.0 && variance_mu1 < 2.0);
 
-    assert!((mean_mu2 - 1.0).abs() < 0.5);
+    assert!((mean_mu2 - mu2).abs() < 0.5);
     assert!(variance_mu2 > 0.0 && variance_mu2 < 2.0);
 }

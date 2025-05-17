@@ -68,6 +68,16 @@ impl DistributionExtendedImpl<f64> for statrs::distribution::Normal {
     }
 }
 
+impl DistributionExtendedImpl<f64> for statrs::distribution::Exp {
+    fn sample_dyn(&self, rng: &mut dyn RngCore) -> f64 {
+        use rand::distributions::Distribution;
+        self.sample(rng)
+    }
+    fn log_prob(&self, value: f64) -> f64 {
+        self.ln_pdf(value)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Condition {
     pub flag: bool,

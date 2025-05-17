@@ -3,7 +3,6 @@
 import AlgorithmDescription from '@/components/AlgorithmDescription';
 import Charts from '@/components/Charts';
 import Controls from '@/components/Controls';
-import Statistics from '@/components/Statistics';
 import WalkVisualization from '@/components/WalkVisualization';
 import { Chart, registerables } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
@@ -68,6 +67,7 @@ export default function Home() {
 
       <Controls
         parameters={parameters}
+        state={state}
         onUpdateParameters={updateParameters}
         isRunning={isRunning}
         onStart={start}
@@ -75,20 +75,14 @@ export default function Home() {
         onReset={reset}
       />
 
-      <Statistics state={state} />
-
       <div className="space-y-8 w-full">
-
-        {/* Charts in Grid Layout */}{/* Charts in Grid Layout */}
+        {/* Charts in Grid Layout */}
         <Charts state={state} parameters={parameters} />
         
         {/* Walk Visualization (Full Width) */}
         {state && <WalkVisualization state={state} isRunning={isRunning} parameters={parameters} />}
-
-        
       </div>
 
-      
     </main>
   );
 }

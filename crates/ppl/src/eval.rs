@@ -2,10 +2,12 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Debug;
 
+use nalgebra::{Cholesky, DMatrix, DVector};
 use rand::distributions::Distribution;
+use rand::rngs::StdRng;
 use rand::Rng;
 use rand::RngCore;
-
+use rand::SeedableRng;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -262,6 +264,12 @@ pub fn standard_env() -> Rc<RefCell<Env>> {
         Value::Procedure(Procedure::Deterministic { func: wrap(lt) }),
     );
 
+    // Unary Ops
+    env.borrow_mut().set(
+        "exp",
+        Value::Procedure(Procedure::Deterministic { func: wrap(exp) }),
+    );
+
     // Data Structures
     env.borrow_mut().set(
         "list",
@@ -273,6 +281,14 @@ pub fn standard_env() -> Rc<RefCell<Env>> {
         "normal",
         Value::Procedure(Procedure::Stochastic {
             name: "normal".to_string(),
+            args: None,
+        }),
+    );
+
+    env.borrow_mut().set(
+        "exponential",
+        Value::Procedure(Procedure::Stochastic {
+            name: "exponential".to_string(),
             args: None,
         }),
     );
@@ -301,8 +317,7 @@ pub struct GenerativeFunction {
     exprs: Vec<Expression>,
     argument_names: Vec<String>,
     scales: HashMap<String, f64>,
-    #[allow(dead_code)]
-    seed: u64,
+    rng: RefCell<StdRng>,
 }
 
 impl GenerativeFunction {
@@ -316,8 +331,13 @@ impl GenerativeFunction {
             exprs,
             argument_names,
             scales,
-            seed,
+            rng: RefCell::new(StdRng::seed_from_u64(seed)),
         }
+    }
+
+    #[inline]
+    pub fn rand(&self) -> std::cell::RefMut<'_, StdRng> {
+        self.rng.borrow_mut()
     }
 
     fn stdlib(
@@ -340,17 +360,20 @@ impl GenerativeFunction {
     }
 
     pub fn simulate(&self, args: Vec<Value>) -> Result<Trace<Self, String, Value>, String> {
-        let mut rng = rand::thread_rng();
         let mut trace = Trace::new(self.clone(), args.clone());
 
-        let env = self.stdlib(&mut trace, &mut rng);
+        {
+            let mut rng = self.rand();
 
-        for (name, arg) in self.argument_names.iter().zip(args) {
-            env.borrow_mut().set(name, arg.clone());
-        }
+            let env = self.stdlib(&mut trace, &mut *rng);
 
-        for expr in self.exprs.iter() {
-            eval(expr.clone(), env.clone(), &mut trace, &mut rng)?;
+            for (name, arg) in self.argument_names.iter().zip(args) {
+                env.borrow_mut().set(name, arg.clone());
+            }
+
+            for expr in self.exprs.iter() {
+                eval(expr.clone(), env.clone(), &mut trace, &mut *rng)?;
+            }
         }
 
         Ok(trace)
@@ -361,47 +384,51 @@ impl GenerativeFunction {
         args: Vec<Value>,
         constraints: HashMap<String, f64>,
     ) -> Result<(Trace<Self, String, Value>, f64), String> {
-        let mut rng = rand::thread_rng();
         let mut trace = Trace::new(self.clone(), args.clone());
-        let env = self.stdlib(&mut trace, &mut rng);
 
-        // Set arguments in environment
-        for (name, arg) in self.argument_names.iter().zip(args) {
-            env.borrow_mut().set(name, arg.clone());
-        }
+        {
+            let mut rng = self.rand();
+            let env = self.stdlib(&mut trace, &mut *rng);
 
-        for expr in &self.exprs {
-            match expr {
-                Expression::Sample { distribution, name } => {
-                    if constraints.contains_key(name) {
-                        // Evaluate the distribution
-                        let dist = eval(*distribution.clone(), env.clone(), &mut trace, &mut rng)?;
+            // Set arguments in environment
+            for (name, arg) in self.argument_names.iter().zip(args) {
+                env.borrow_mut().set(name, arg.clone());
+            }
 
-                        let val = constraints[name];
-                        let score = match dist {
-                            Value::Procedure(Procedure::Stochastic {
-                                name: dist_name,
-                                args,
-                                ..
-                            }) => {
-                                let args = args.unwrap_or_default();
-                                let dist = create_distribution(&dist_name, &args)?;
-                                dist.log_prob(&Value::Float(val))?
-                            }
-                            _ => {
-                                return Err(
-                                    "Sample distribution must yield a distribution".to_string()
-                                )
-                            }
-                        };
+            for expr in &self.exprs {
+                match expr {
+                    Expression::Sample { distribution, name } => {
+                        if constraints.contains_key(name) {
+                            // Evaluate the distribution
+                            let dist =
+                                eval(*distribution.clone(), env.clone(), &mut trace, &mut *rng)?;
 
-                        trace.add_choice(name.clone(), Value::Float(val), score);
-                    } else {
-                        eval(expr.clone(), env.clone(), &mut trace, &mut rng)?;
+                            let val = constraints[name];
+                            let score = match dist {
+                                Value::Procedure(Procedure::Stochastic {
+                                    name: dist_name,
+                                    args,
+                                    ..
+                                }) => {
+                                    let args = args.unwrap_or_default();
+                                    let dist = create_distribution(&dist_name, &args)?;
+                                    dist.log_prob(&Value::Float(val))?
+                                }
+                                _ => {
+                                    return Err(
+                                        "Sample distribution must yield a distribution".to_string()
+                                    )
+                                }
+                            };
+
+                            trace.add_choice(name.clone(), Value::Float(val), score);
+                        } else {
+                            eval(expr.clone(), env.clone(), &mut trace, &mut *rng)?;
+                        }
                     }
-                }
-                _ => {
-                    eval(expr.clone(), env.clone(), &mut trace, &mut rng)?;
+                    _ => {
+                        eval(expr.clone(), env.clone(), &mut trace, &mut *rng)?;
+                    }
                 }
             }
         }
@@ -417,26 +444,56 @@ impl GenerativeFunction {
         let old_score = trace.get_score();
         let args = trace.get_args().clone();
 
-        let mut proposals = HashMap::new();
-        for (addr, record) in trace.choices.iter() {
-            if selection.contains(addr) {
-                let Value::Float(old_val) = record.subtrace_or_retval else {
-                    return Err(format!("Expected float at address {}", addr));
-                };
+        let mut keys: Vec<_> = selection.iter().cloned().collect();
+        if keys.is_empty() {
+            return Err("regenerate: empty selection".into());
+        }
+        keys.sort();
 
-                let Some(&scale) = self.scales.get(addr) else {
-                    return Err(format!("Missing scale for {}", addr));
-                };
-                let new_val = statrs::distribution::Normal::new(old_val, scale)
-                    .unwrap()
-                    .sample(&mut rand::thread_rng());
-                proposals.insert(addr.clone(), new_val);
+        let d = keys.len();
+
+        let mut mean = DVector::zeros(d);
+        for (i, k) in keys.iter().enumerate() {
+            mean[i] = trace.get_choice(k).value.expect_float();
+        }
+
+        let mut sigma = DMatrix::<f64>::zeros(d, d);
+
+        for (i, k) in keys.iter().enumerate() {
+            sigma[(i, i)] = self.scales.get(k).copied().unwrap_or(1.0).powi(2);
+        }
+        for i in 0..d {
+            for j in (i + 1)..d {
+                let key = format!("{},{}", keys[i], keys[j]);
+                if let Some(&v) = self.scales.get(&key) {
+                    sigma[(i, j)] = v;
+                    sigma[(j, i)] = v;
+                }
             }
         }
 
-        let (new_trace, _) = self.generate(args, proposals)?;
+        /* Cholesky factor L (Σ = L Lᵀ) */
+        let l = Cholesky::new(sigma)
+            .ok_or("regenerate: covariance not positive-definite")?
+            .l();
 
+        let normal = statrs::distribution::Normal::new(0.0, 1.0).unwrap();
+
+        let delta: DVector<f64> = {
+            let mut rng = self.rand();
+            let eps = DVector::from_fn(d, |_, _| normal.sample(&mut *rng));
+            &l * eps
+        };
+
+        let proposals = keys
+            .iter()
+            .enumerate()
+            .map(|(i, k)| (k.clone(), mean[i] + delta[i]))
+            .collect::<HashMap<_, _>>();
+
+        let (new_trace, _) = self.generate(args.clone(), proposals)?;
         let weight = new_trace.get_score() - old_score;
+
         Ok((new_trace, weight))
     }
 
@@ -451,12 +508,12 @@ impl GenerativeFunction {
 }
 
 pub fn mh(
-    program: GenerativeFunction,
+    program: &GenerativeFunction,
     trace: Trace<GenerativeFunction, String, Value>,
-    selection: HashSet<String>,
+    selection: &HashSet<String>,
 ) -> Result<(Trace<GenerativeFunction, String, Value>, bool), String> {
-    let (updated, weight) = program.regenerate(trace.clone(), &selection)?;
-    let mut rng = rand::thread_rng();
+    let (updated, weight) = program.regenerate(trace.clone(), selection)?;
+    let mut rng = program.rand();
 
     // Acceptance check
     if rng.gen::<f64>().ln() < weight {

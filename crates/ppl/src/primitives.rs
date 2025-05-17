@@ -123,6 +123,15 @@ pub fn div(args: Vec<Value>) -> Result<Value, String> {
     Ok(finalize_numeric_result(result, saw_float))
 }
 
+pub fn exp(args: Vec<Value>) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("exp expects 1 argument".to_string());
+    }
+
+    let v = args[0].as_float().ok_or("exp expects a numeric argument")?;
+    Ok(Value::Float(v.exp()))
+}
+
 pub fn eq(args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 2 {
         return Err("= takes exactly two arguments".to_string());
@@ -226,6 +235,31 @@ impl Parseable for statrs::distribution::Normal {
 
         statrs::distribution::Normal::new(mean, std_dev)
             .map_err(|e| format!("Failed to create Normal distribution: {}", e))
+    }
+}
+
+impl Parseable for statrs::distribution::Exp {
+    fn parse(args: &[Value]) -> Result<Self, String> {
+        if args.len() != 1 {
+            return Err(format!(
+                "Exponential expects 1 argument, got {}",
+                args.len()
+            ));
+        }
+
+        let lambda = args[0]
+            .as_float()
+            .ok_or_else(|| "Exponential parameter must be a number".to_string())?;
+
+        if lambda <= 0.0 {
+            return Err(format!(
+                "Exponential parameter must be positive, got {}",
+                lambda
+            ));
+        }
+
+        statrs::distribution::Exp::new(lambda)
+            .map_err(|e| format!("Failed to create Exponential distribution: {}", e))
     }
 }
 
@@ -353,6 +387,10 @@ pub fn create_distribution(name: &str, args: &[Value]) -> Result<ValueDistributi
         "normal" | "gaussian" => {
             let normal = statrs::distribution::Normal::parse(args)?;
             Ok(ValueDistribution::Continuous(Box::new(normal)))
+        }
+        "exponential" => {
+            let exponential = statrs::distribution::Exp::parse(args)?;
+            Ok(ValueDistribution::Continuous(Box::new(exponential)))
         }
         "mixture" => {
             let mixture = Mixture::parse(args)?;
