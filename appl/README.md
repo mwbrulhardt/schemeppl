@@ -28,15 +28,3 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-
-## To Dos
-
-- Parameters
-
-  - When parameters are changed, make sure that all of the UI elements are updated accordingly as well as removing leftover elements from other simulations
-  - Make sure that the reset button is working correctly
-
-- Walk Visualization
-  - Make sure axes are updated according to parameters
-  - Remove burn-in from the points animation
-  - Make sure dots are reflective of being weighted

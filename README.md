@@ -43,6 +43,7 @@ let model = gen!(
 ```
 
 This example demonstrates:
+
 - Prior specification using `sample`
 - Constraints on parameters using `constrain`
 - Mixture model definition
@@ -78,16 +79,15 @@ classDiagram
 
 ## Limitations
 
-- **Limited Distribution Support**: Currently only supports basic probability distributions (normal, bernoulli) and lacks support for more complex distributions
+- **Limited Distribution Support**: Currently only supports basic probability distributions (normal, bernoulli, exponential)
 - **Basic Inference**: Only implements Random Walk Metropolis-Hastings, missing more advanced inference methods like HMC, NUTS, or variational inference
 - **No Automatic Differentiation**: Cannot handle models that require gradient-based inference methods
-- **Limited Constraint System**: Only supports simple inequality constraints, no support for complex logical constraints or custom constraint functions
 - **No Parallel Inference**: Inference is performed sequentially, no support for parallel MCMC chains or distributed computation
-- **Limited Memory Management**: No built-in support for handling large datasets or memory-efficient computation
-- **Basic Error Handling**: Limited error reporting and debugging capabilities for model specification and inference
-- **No Model Compilation**: Models are interpreted at runtime, no ahead-of-time compilation or optimization
 - **No Recursive Functions**: Cannot define or use recursive functions in model definitions
 - **No Nested Generative Functions**: Cannot define or use generative functions inside other generative functions
 
 ## References
-- Church: https://cocolab.stanford.edu/papers/GoodmanEtAl2008-UncertaintyInArtificialIntelligence.pdf
+
+- [Church](https://cocolab.stanford.edu/papers/GoodmanEtAl2008-UncertaintyInArtificialIntelligence.pdf)
+- [Venture](https://arxiv.org/abs/1404.0099)
+- [Anglican](https://arxiv.org/abs/1608.05263)
