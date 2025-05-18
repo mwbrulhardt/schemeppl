@@ -81,15 +81,6 @@ export default function AlgorithmDescription() {
           distribution of the parameters.
         </li>
       </ol>
-      <p className="mt-4">
-        The simulation tracks the acceptance ratio and provides visualization of
-        the sampling process, including:
-      </p>
-      <ul className="list-disc pl-6 mb-4">
-        <li>The trace of accepted and rejected proposals for both means</li>
-        <li>The posterior distribution of the parameters</li>
-        <li>The fit of the GMM to the observed data</li>
-      </ul>
 
       <h3 className="text-lg font-semibold mt-6 mb-3">
         Model Specification with{' '}
