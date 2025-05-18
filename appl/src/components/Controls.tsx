@@ -1,4 +1,5 @@
-import { Parameters, SimulationState } from '@/hooks/useSimulator';
+import { Parameters } from '@/types/simulation';
+import { SimulationState } from '@/hooks/useSimulator';
 import { useCallback, useEffect, useState, useMemo } from 'react';
 import 'katex/dist/katex.min.css';
 import katex from 'katex';
@@ -108,16 +109,61 @@ export default function Controls({
     });
   }, [parameters]);
 
+  /**
+   * Update a single parameter while the user is typing.
+   *
+   * Rules:
+   *   • Local input state (`inputValues`) is always updated – user can type freely.
+   *   • Each field's `inputValidity` is updated so that invalid values are highlighted.
+   *   • The expensive part (propagating the change to the simulator/worker) only
+   *     happens when the *entire* constraint set is satisfied – in particular
+   *     we require `mu1 < mu2` before calling `onUpdateParameters` for either
+   *     of those two fields.
+   */
   const handleParameterChange = useCallback(
     (key: keyof Parameters, value: string) => {
+      // Immediately reflect the change in the local form state
       setInputValues((prev) => ({ ...prev, [key]: value }));
-      const isValid = validators[key](value);
-      setInputValidity((prev) => ({ ...prev, [key]: isValid }));
-      if (isValid) {
+
+      // Build helper snapshot that includes the just-modified field
+      const nextValues = { ...inputValues, [key]: value };
+
+      // Per-field basic validation (number ranges, etc.)
+      const basicValid = validators[key](value);
+
+      // Special cross-field constraint for the means
+      const mu1Num = parseFloat(nextValues.mu1);
+      const mu2Num = parseFloat(nextValues.mu2);
+      const muOrderingSatisfied =
+        !isNaN(mu1Num) && !isNaN(mu2Num) ? mu1Num < mu2Num : true; // ignore while one of them is still non-numeric
+
+      // Update validity map – mu fields depend on each other
+      setInputValidity((prev) => {
+        const updated: typeof prev = { ...prev };
+        if (key === 'mu1' || key === 'mu2') {
+          updated.mu1 = validators.mu1(nextValues.mu1) && muOrderingSatisfied;
+          updated.mu2 = validators.mu2(nextValues.mu2) && muOrderingSatisfied;
+        } else {
+          updated[key] = basicValid;
+        }
+        return updated;
+      });
+
+      // Only forward to the simulator when *all* of the following hold:
+      //   1. The edited field itself is basically valid
+      //   2. For mu fields: the ordering constraint is satisfied
+      //   3. The value is a complete, valid number (not just a minus sign or partial number)
+      const readyToPropagate =
+        basicValid &&
+        (key === 'mu1' || key === 'mu2' ? muOrderingSatisfied : true) &&
+        !isNaN(parseFloat(value));
+
+      if (readyToPropagate) {
         onUpdateParameters({ [key]: parseFloat(value) });
       }
     },
-    [onUpdateParameters, validators]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [onUpdateParameters, validators, inputValues]
   );
 
   // Add a separate handler for the delay slider
@@ -128,7 +174,6 @@ export default function Controls({
 
       // The delay value is always valid based on the slider constraints
       const numericValue = parseFloat(value);
-      console.log(`Slider changed to: ${numericValue}ms`);
 
       // Update the parameter immediately
       onUpdateParameters({ delay: numericValue });
@@ -399,8 +444,8 @@ export default function Controls({
                 className={`${getInputClass('delay')} ${isRunning ? 'bg-green-50' : ''}`}
               />
               <div className="flex justify-between text-xs text-gray-500 mt-1">
-                <span>Fast (0ms)</span>
-                <span>Slow (1000ms)</span>
+                <span>Fast</span>
+                <span>Slow</span>
               </div>
             </div>
             <div className="flex gap-4 mt-2">

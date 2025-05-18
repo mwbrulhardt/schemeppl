@@ -7,7 +7,14 @@ const nextConfig: NextConfig = {
       config.resolve.alias['hammerjs'] = false;
     }
     // Enable async WebAssembly support
-    config.experiments = { ...config.experiments, asyncWebAssembly: true };
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+    };
+    // config.module.rules.push({
+    //   test: /\.wasm$/,
+    //   type: 'asset/resource',
+    // });
     return config;
   },
 };

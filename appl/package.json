@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build:wasm": "cd ../crates/wasm && wasm-pack build --target web --out-dir ../../appl/src/pkg",
-    "dev": "next dev --turbopack",
+    "build:wasm": "cd ../crates/wasm && wasm-pack build --target bundler --out-dir ../../appl/src/pkg",
+    "dev": "next dev",
     "build": "yarn build:wasm && next build",
     "start": "next start",
     "lint": "next lint",

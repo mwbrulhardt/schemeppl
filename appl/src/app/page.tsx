@@ -1,23 +1,46 @@
 'use client';
 
+import { useEffect, useState, useCallback } from 'react';
 import AlgorithmDescription from '@/components/AlgorithmDescription';
 import Charts from '@/components/Charts';
 import Controls from '@/components/Controls';
 import WalkVisualization from '@/components/WalkVisualization';
 import { Chart, registerables } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
-import { useEffect, useState } from 'react';
 import { useSimulator } from '../hooks/useSimulator';
+import { useWasmWorker } from '@/hooks/useWorker';
 
 // Register Chart.js plugins
 Chart.register(...registerables, annotationPlugin);
 
 export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
-  const [error] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const { request } = useWasmWorker();
+
+  const runGenerateData = useCallback(() => {
+    setIsLoading(true);
+    setError(null);
+    request('generate_data', {
+      mu1: 0,
+      sigma1: 1,
+      mu2: 5,
+      sigma2: 2,
+      p: 0.5,
+      n: 100,
+      seed: 42,
+    })
+      .then(() => {
+        setIsLoading(false);
+      })
+      .catch((err: Error) => {
+        setError(err.message);
+        setIsLoading(false);
+      });
+  }, [request]);
 
   const {
-    algorithm,
     isRunning,
     start,
     pause,
@@ -28,10 +51,15 @@ export default function Home() {
   } = useSimulator();
 
   useEffect(() => {
-    if (algorithm) {
+    runGenerateData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (state) {
       setIsLoading(false);
     }
-  }, [algorithm]);
+  }, [state]);
 
   if (isLoading) {
     return (
@@ -78,10 +106,7 @@ export default function Home() {
       />
 
       <div className="space-y-8 w-full">
-        {/* Charts in Grid Layout */}
         <Charts state={state} parameters={parameters} />
-
-        {/* Walk Visualization (Full Width) */}
         {state && (
           <WalkVisualization
             state={state}

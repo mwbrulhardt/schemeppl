@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Parameters } from '@/hooks/useSimulator';
+import { Parameters } from '@/types/simulation';
 import { Chart, ChartConfiguration, registerables } from 'chart.js';
 import annotationPlugin, {
   AnnotationOptions,
@@ -8,27 +8,12 @@ import annotationPlugin, {
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { calculateMean, kde } from '@/utils/stats';
 import Statistics from '@/components/Statistics';
-
+import { SimulationState } from '@/hooks/useSimulator';
 Chart.register(...registerables, annotationPlugin);
 
 /*****************************
  * Types
  *****************************/
-export interface SimulationState {
-  mu1: number;
-  mu2: number;
-  acceptance_ratio: number;
-  samples: {
-    mu1: number[];
-    mu2: number[];
-  };
-  steps: Array<{ mu1: number; mu2: number; accepted: boolean }>;
-  distribution: Array<{ x: number; pdf: number }>;
-  histogram: Array<{ x: number; frequency: number }>;
-  data: number[];
-  labels: number[];
-}
-
 interface ChartsProps {
   state: SimulationState | null;
   parameters: Parameters;
@@ -94,11 +79,30 @@ export default function Charts({ state, parameters }: ChartsProps) {
   /***** Derived helpers *****/
   const xDomain = useCallback(() => {
     const { mu1, mu2, sigma1, sigma2 } = parameters;
+
+    // Calculate theoretical range
+    const theoreticalMin = Math.min(mu1, mu2) - 2 * Math.max(sigma1, sigma2);
+    const theoreticalMax = Math.max(mu1, mu2) + 2 * Math.max(sigma1, sigma2);
+
+    // If we have data, use it to adjust the range
+    if (state?.data && state.data.length > 0) {
+      const dataMin = Math.min(...state.data);
+      const dataMax = Math.max(...state.data);
+      const dataRange = dataMax - dataMin;
+
+      // Use the tighter of the two ranges, with a small buffer
+      return {
+        xMin: Math.min(theoreticalMin, dataMin - 0.1 * dataRange),
+        xMax: Math.max(theoreticalMax, dataMax + 0.1 * dataRange),
+      } as const;
+    }
+
+    // Fallback to theoretical range if no data
     return {
-      xMin: Math.min(mu1, mu2) - 2.5 * sigma1,
-      xMax: Math.max(mu1, mu2) + 2.5 * sigma2,
+      xMin: theoreticalMin,
+      xMax: theoreticalMax,
     } as const;
-  }, [parameters]);
+  }, [parameters, state?.data]);
 
   const xVals = useMemo(() => {
     const { xMin, xMax } = xDomain();
@@ -298,8 +302,11 @@ export default function Charts({ state, parameters }: ChartsProps) {
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          layout: {
+            padding: 0,
+          },
           plugins: {
-            title: { display: true, text: 'GMM Distribution vs. Samples' },
+            title: { display: true, text: 'Distributions' },
             tooltip: { mode: 'index', intersect: false },
             annotation: { annotations: annotationConfig as any },
           },
@@ -309,15 +316,23 @@ export default function Charts({ state, parameters }: ChartsProps) {
               min: xMin,
               max: xMax,
               title: { display: true, text: 'x' },
+              offset: false,
+              grid: {
+                offset: false,
+              },
             },
             y: {
               title: { display: true, text: 'Probability Density' },
               position: 'left',
+              grid: {
+                offset: false,
+              },
             },
             y2: {
               title: { display: true, text: 'Posterior Density' },
               position: 'right',
               grid: { drawOnChartArea: false },
+              offset: false,
             },
           },
           animation: { duration: 0 },
@@ -331,6 +346,10 @@ export default function Charts({ state, parameters }: ChartsProps) {
         ...(chart.options.scales!.x as any),
         min: xMin,
         max: xMax,
+        offset: false,
+        grid: {
+          offset: false,
+        },
       };
       chart.options.plugins!.annotation!.annotations = annotationConfig as any;
       chart.update('none');

@@ -69,12 +69,7 @@ pub struct JsGenerativeFunction {
 impl JsGenerativeFunction {
     #[wasm_bindgen(constructor)]
     pub fn new(src: String, scales: &Object, seed: u64) -> JsGenerativeFunction {
-        log(&format!(
-            "Initializing JsGenerativeFunction with src: {}",
-            src
-        ));
         let exprs = parse_string(&src);
-        log(&format!("Exprs: {:?}", exprs));
 
         let mut scales_map = HashMap::new();
         let keys = js_sys::Object::keys(scales);

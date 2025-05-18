@@ -3,23 +3,25 @@
 import {
   Chart,
   ScatterController,
+  BubbleController,
   PointElement,
   LineElement,
   LinearScale,
   Tooltip,
   Legend,
   Filler,
-  TooltipItem,
   ChartOptions,
 } from 'chart.js';
 import { Scatter } from 'react-chartjs-2';
 import { useMemo } from 'react';
-import type { Parameters, SimulationState } from '@/hooks/useSimulator';
+import { SimulationState } from '@/hooks/useSimulator';
+import type { Parameters } from '@/types/simulation';
 import { zoomAndPanPlugin } from '@/lib/chart/zoomAndPanPlugin';
 
 // Register core elements + our custom plugin **once**
 Chart.register(
   ScatterController,
+  BubbleController,
   PointElement,
   LineElement,
   LinearScale,
@@ -39,6 +41,8 @@ interface DataPoint {
   x: number;
   y: number;
   step: number;
+  /** Number of rejected proposals before moving to the next accepted location */
+  rejects?: number;
 }
 
 export default function WalkVisualization({
@@ -49,51 +53,88 @@ export default function WalkVisualization({
   /* --------------------------------------------------------------- */
   /* 1. Build datasets                                               */
   /* --------------------------------------------------------------- */
-  const { datasets, min, max } = useMemo(() => {
+  const { datasets, minX, maxX, minY, maxY } = useMemo(() => {
     const steps = state?.steps ?? [];
 
-    const accepted = steps.filter((s) => s.accepted);
-    const rejected = steps.filter((s) => !s.accepted);
+    // Pre-compute indices of accepted points to measure the number of
+    // rejected proposals between them.  For each accepted point we attach a
+    // `rejects` property indicating how many proposals were rejected before
+    // the chain moved to the *next* accepted location.
+    const acceptedIndices: number[] = [];
+    steps.forEach((s, idx) => {
+      if (s.accepted) acceptedIndices.push(idx);
+    });
 
-    const toPts = (arr: typeof steps) =>
-      arr.map((p, i) => ({ x: p.mu1, y: p.mu2, step: i + 1 }));
+    const acceptedPts: DataPoint[] = [];
+    const rejectedPts: DataPoint[] = [];
 
-    const acceptedPts = toPts(accepted);
-    const rejectedPts = toPts(rejected);
+    const acceptedRadii: number[] = [];
+    const acceptedBgColors: string[] = [];
+
+    acceptedIndices.forEach((accIdx, k) => {
+      const nextAccIdx =
+        k + 1 < acceptedIndices.length ? acceptedIndices[k + 1] : steps.length;
+      const rejectsBetween = Math.max(nextAccIdx - accIdx - 1, 0);
+
+      const p = steps[accIdx];
+      acceptedPts.push({
+        x: p.mu1,
+        y: p.mu2,
+        step: accIdx + 1,
+        rejects: rejectsBetween,
+      });
+
+      // Radius: base 2px + 0.8 px per rejected proposal (clamped)
+      acceptedRadii.push(Math.min(2 + rejectsBetween * 0.8, 10));
+
+      // Opacity inversely proportional to rejected count (≥ 0.3, ≤ 1.0)
+      const alpha = Math.max(0.3, 1 - rejectsBetween * 0.1);
+      acceptedBgColors.push(`rgba(77, 77, 77, ${alpha})`);
+    });
+
+    // Rejected points are plotted too but we do not need extra tooltip info.
+    steps.forEach((s, idx) => {
+      if (!s.accepted) {
+        rejectedPts.push({ x: s.mu1, y: s.mu2, step: idx + 1 });
+      }
+    });
 
     const axisPad = 2;
-    const { mu1, mu2 } = parameters;
-    const lo = Math.min(mu1, mu2) - axisPad;
-    const hi = Math.max(mu1, mu2) + axisPad;
+
+    // Collect all x (mu1) and y (mu2) values currently in view, including
+    // the original parameter means as sensible fallbacks when there are no
+    // samples yet.
+    const xs = [parameters.mu1, parameters.mu2, ...steps.map((s) => s.mu1)];
+    const ys = [parameters.mu1, parameters.mu2, ...steps.map((s) => s.mu2)];
+
+    const minX = Math.min(...xs) - axisPad;
+    const maxX = Math.max(...xs) + axisPad;
+    const minY = Math.min(...ys) - axisPad;
+    const maxY = Math.max(...ys) + axisPad;
 
     return {
       datasets: [
-        // thin grey path through accepted points
-        {
-          label: 'Path',
-          data: acceptedPts,
-          showLine: true,
-          pointRadius: 0,
-          borderWidth: 1,
-          borderColor: '#999',
-        },
         {
           label: 'Accepted',
           data: acceptedPts,
-          backgroundColor: '#4d4d4d',
-          pointRadius: 3,
-          pointHoverRadius: 6,
+          backgroundColor: acceptedBgColors,
+          borderColor: '#4d4d4d',
+          borderWidth: 1,
+          pointRadius: acceptedRadii,
+          pointHoverRadius: acceptedRadii,
         },
         {
           label: 'Rejected',
           data: rejectedPts,
           backgroundColor: 'rgba(215,48,39,0.7)',
-          pointRadius: 3,
-          pointHoverRadius: 6,
+          pointRadius: 2,
+          pointHoverRadius: 4,
         },
       ],
-      min: lo,
-      max: hi,
+      minX,
+      maxX,
+      minY,
+      maxY,
     };
   }, [state, parameters]);
 
@@ -113,38 +154,25 @@ export default function WalkVisualization({
         scales: {
           x: {
             type: 'linear' as const,
-            min,
-            max,
+            minX,
+            maxX,
             title: { display: true, text: 'μ₁' },
             grid: { color: '#e0e0e0' },
           },
           y: {
             type: 'linear' as const,
-            min,
-            max,
+            minY,
+            maxY,
             title: { display: true, text: 'μ₂' },
             grid: { color: '#e0e0e0' },
           },
         },
         plugins: {
           legend: { display: false },
-          tooltip: {
-            enabled: true,
-            position: 'nearest',
-            callbacks: {
-              title() {
-                return ''; // No title needed
-              },
-              label(ctx: TooltipItem<'scatter'>) {
-                const { x, y } = ctx.parsed;
-                const step = (ctx.raw as DataPoint)?.step ?? '?';
-                return `#${step} ${ctx.dataset.label}: (${x.toFixed(2)}, ${y.toFixed(2)})`;
-              },
-            },
-          },
+          tooltip: { enabled: false },
         },
       }) as ChartOptions<'scatter'>,
-    [isRunning, min, max]
+    [isRunning, minX, maxX, minY, maxY]
   );
 
   /* --------------------------------------------------------------- */
@@ -153,7 +181,7 @@ export default function WalkVisualization({
   return (
     <div className="relative h-[600px] w-full max-w-4xl mx-auto bg-white rounded-lg shadow p-4">
       <h2 className="text-xl font-semibold mb-4">
-        Metropolis-Hastings Random Walk
+        Metropolis-Hastings Random Walk (including burn-in)
       </h2>
       <Scatter
         data={{ datasets }}
