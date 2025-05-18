@@ -11,10 +11,6 @@ const nextConfig: NextConfig = {
       ...config.experiments,
       asyncWebAssembly: true,
     };
-    // config.module.rules.push({
-    //   test: /\.wasm$/,
-    //   type: 'asset/resource',
-    // });
     return config;
   },
 };
