@@ -269,4 +269,10 @@ self.onmessage = (event) => {
   }
 };
 
+/* -------------------------------------------------------------- */
+// Signal to the main thread that the worker (and therefore the Wasm module)
+// has been fully loaded.  Messages queued by the UI will be flushed once this
+// notification is received.
+(self as DedicatedWorkerGlobalScope).postMessage({ type: 'ready' });
+
 export {};
