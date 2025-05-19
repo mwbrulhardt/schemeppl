@@ -6,7 +6,7 @@ import annotationPlugin, {
   AnnotationTypeRegistry,
 } from 'chartjs-plugin-annotation';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { calculateMean, kde } from '@/utils/stats';
+import { calculateMean, kde, normalPdf } from '@/utils/stats';
 import Statistics from '@/components/Statistics';
 import { SimulationState } from '@/hooks/useSimulator';
 Chart.register(...registerables, annotationPlugin);
@@ -104,13 +104,14 @@ export default function Charts({ state, parameters }: ChartsProps) {
     } as const;
   }, [parameters, state?.data]);
 
+  const numPoints = 100;
   const xVals = useMemo(() => {
     const { xMin, xMax } = xDomain();
     return Array.from(
-      { length: 100 },
-      (_, i) => xMin + ((xMax - xMin) * i) / 99
+      { length: numPoints },
+      (_, i) => xMin + ((xMax - xMin) * i) / (numPoints - 1)
     );
-  }, [xDomain]);
+  }, [xDomain, numPoints]);
 
   /***** Chart initialisation helpers *****/
   const initChart = (
@@ -175,15 +176,10 @@ export default function Charts({ state, parameters }: ChartsProps) {
     const targetDataset = lineDataset('Target', 'rgba(75, 192, 192, 1)');
     targetDataset.data = localXVals.map((x) => {
       const { mu1, mu2, sigma1, sigma2, p } = parameters;
-      const p1 =
-        p *
-        (1 / (sigma1 * Math.sqrt(2 * Math.PI))) *
-        Math.exp(-0.5 * Math.pow((x - mu1) / sigma1, 2));
-      const p2 =
-        (1 - p) *
-        (1 / (sigma2 * Math.sqrt(2 * Math.PI))) *
-        Math.exp(-0.5 * Math.pow((x - mu2) / sigma2, 2));
-      return { x, y: p1 + p2 };
+      return {
+        x,
+        y: p * normalPdf(x, mu1, sigma1) + (1 - p) * normalPdf(x, mu2, sigma2),
+      };
     });
 
     // Histogram

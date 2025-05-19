@@ -24,3 +24,11 @@ export const kde = (samples: number[], x: number, bandwidth: number) => {
     ) * norm
   );
 };
+
+// Normal PDF
+export function normalPdf(x: number, mu: number, sigma: number) {
+  return (
+    (1 / (sigma * Math.sqrt(2 * Math.PI))) *
+    Math.exp(-0.5 * Math.pow((x - mu) / sigma, 2))
+  );
+}

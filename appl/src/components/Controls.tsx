@@ -4,6 +4,22 @@ import { useCallback, useEffect, useState, useMemo } from 'react';
 import 'katex/dist/katex.min.css';
 import katex from 'katex';
 
+// Parameter constraints
+const PARAMETER_CONSTRAINTS = {
+  mu1: { min: -Infinity, max: Infinity },
+  mu2: { min: -Infinity, max: Infinity },
+  sigma1: { min: 0.1, max: Infinity },
+  sigma2: { min: 0.1, max: Infinity },
+  p: { min: 0.01, max: 0.99 },
+  proposalStdDev1: { min: 0.1, max: Infinity },
+  proposalStdDev2: { min: 0.1, max: Infinity },
+  numSteps: { min: 100, max: 10000 },
+  burnIn: { min: 0, max: 2000 },
+  delay: { min: 0, max: 1000 },
+  seed: { min: 0, max: Infinity },
+  sampleSize: { min: 10, max: 1000 },
+} as const;
+
 interface ControlsProps {
   parameters: Parameters;
   state: SimulationState | null;
@@ -62,17 +78,38 @@ export default function Controls({
     () => ({
       mu1: (v: string) => !isNaN(Number(v)),
       mu2: (v: string) => !isNaN(Number(v)),
-      sigma1: (v: string) => !isNaN(Number(v)) && Number(v) > 0,
-      sigma2: (v: string) => !isNaN(Number(v)) && Number(v) > 0,
-      p: (v: string) => !isNaN(Number(v)) && Number(v) > 0 && Number(v) < 1,
-      proposalStdDev1: (v: string) => !isNaN(Number(v)) && Number(v) > 0,
-      proposalStdDev2: (v: string) => !isNaN(Number(v)) && Number(v) > 0,
-      numSteps: (v: string) => !isNaN(Number(v)) && Number(v) >= 100,
-      burnIn: (v: string) => !isNaN(Number(v)) && Number(v) >= 0,
+      sigma1: (v: string) =>
+        !isNaN(Number(v)) && Number(v) >= PARAMETER_CONSTRAINTS.sigma1.min,
+      sigma2: (v: string) =>
+        !isNaN(Number(v)) && Number(v) >= PARAMETER_CONSTRAINTS.sigma2.min,
+      p: (v: string) =>
+        !isNaN(Number(v)) &&
+        Number(v) >= PARAMETER_CONSTRAINTS.p.min &&
+        Number(v) <= PARAMETER_CONSTRAINTS.p.max,
+      proposalStdDev1: (v: string) =>
+        !isNaN(Number(v)) &&
+        Number(v) >= PARAMETER_CONSTRAINTS.proposalStdDev1.min,
+      proposalStdDev2: (v: string) =>
+        !isNaN(Number(v)) &&
+        Number(v) >= PARAMETER_CONSTRAINTS.proposalStdDev2.min,
+      numSteps: (v: string) =>
+        !isNaN(Number(v)) &&
+        Number(v) >= PARAMETER_CONSTRAINTS.numSteps.min &&
+        Number(v) <= PARAMETER_CONSTRAINTS.numSteps.max,
+      burnIn: (v: string) =>
+        !isNaN(Number(v)) &&
+        Number(v) >= PARAMETER_CONSTRAINTS.burnIn.min &&
+        Number(v) <= PARAMETER_CONSTRAINTS.burnIn.max,
       delay: (v: string) =>
-        !isNaN(Number(v)) && Number(v) >= 0 && Number(v) <= 1000,
-      seed: (v: string) => !isNaN(Number(v)) && Number(v) >= 0,
-      sampleSize: (v: string) => !isNaN(Number(v)) && Number(v) >= 10,
+        !isNaN(Number(v)) &&
+        Number(v) >= PARAMETER_CONSTRAINTS.delay.min &&
+        Number(v) <= PARAMETER_CONSTRAINTS.delay.max,
+      seed: (v: string) =>
+        !isNaN(Number(v)) && Number(v) >= PARAMETER_CONSTRAINTS.seed.min,
+      sampleSize: (v: string) =>
+        !isNaN(Number(v)) &&
+        Number(v) >= PARAMETER_CONSTRAINTS.sampleSize.min &&
+        Number(v) <= PARAMETER_CONSTRAINTS.sampleSize.max,
     }),
     []
   );
@@ -128,34 +165,40 @@ export default function Controls({
       // Build helper snapshot that includes the just-modified field
       const nextValues = { ...inputValues, [key]: value };
 
+      // Check if the input is a partial number (like "-" or "-0" or ".")
+      const isPartialNumber = /^-?\.?$|^-?0?\.?$/.test(value) && value !== '0';
+
       // Per-field basic validation (number ranges, etc.)
-      const basicValid = validators[key](value);
+      // Only validate if it's not a partial number
+      const basicValid = isPartialNumber || validators[key](value);
 
       // Special cross-field constraint for the means
       const mu1Num = parseFloat(nextValues.mu1);
       const mu2Num = parseFloat(nextValues.mu2);
       const muOrderingSatisfied =
-        !isNaN(mu1Num) && !isNaN(mu2Num) ? mu1Num < mu2Num : true; // ignore while one of them is still non-numeric
+        !isNaN(mu1Num) && !isNaN(mu2Num) ? mu1Num < mu2Num : true;
 
       // Update validity map – mu fields depend on each other
       setInputValidity((prev) => {
         const updated: typeof prev = { ...prev };
         if (key === 'mu1' || key === 'mu2') {
-          updated.mu1 = validators.mu1(nextValues.mu1) && muOrderingSatisfied;
-          updated.mu2 = validators.mu2(nextValues.mu2) && muOrderingSatisfied;
+          updated.mu1 =
+            (isPartialNumber || validators.mu1(nextValues.mu1)) &&
+            muOrderingSatisfied;
+          updated.mu2 =
+            (isPartialNumber || validators.mu2(nextValues.mu2)) &&
+            muOrderingSatisfied;
         } else {
           updated[key] = basicValid;
         }
         return updated;
       });
 
-      // Only forward to the simulator when *all* of the following hold:
-      //   1. The edited field itself is basically valid
-      //   2. For mu fields: the ordering constraint is satisfied
-      //   3. The value is a complete, valid number (not just a minus sign or partial number)
+      // Only forward to the simulator when we have a complete, valid number
       const readyToPropagate =
         basicValid &&
         (key === 'mu1' || key === 'mu2' ? muOrderingSatisfied : true) &&
+        !isPartialNumber &&
         !isNaN(parseFloat(value));
 
       if (readyToPropagate) {
@@ -183,7 +226,9 @@ export default function Controls({
 
   // Helper to get input class
   const getInputClass = (key: keyof Parameters) =>
-    `w-full p-2 border rounded ${inputValidity[key] ? '' : 'border-red-500 ring-2 ring-red-200'}`;
+    `w-full p-2 border rounded ${
+      inputValidity[key] ? '' : 'border-red-500 ring-2 ring-red-200'
+    } ${isRunning ? 'opacity-50 bg-gray-100 cursor-not-allowed' : ''}`;
 
   // Compute progress bar values (based on simulation state)
   const { progressPercent, postBurnSteps } = useMemo(() => {
@@ -225,8 +270,14 @@ export default function Controls({
       <h2 className="text-xl font-semibold mb-4">Parameters</h2>
       {/* Mixture Model Section */}
       <div className="space-y-6">
-        <div className="bg-white p-4 rounded-lg shadow">
-          <h3 className="text-lg font-medium mb-4">Mixture Model</h3>
+        <div
+          className={`bg-white p-4 rounded-lg shadow ${isRunning ? 'opacity-75' : ''}`}
+        >
+          <h3
+            className={`text-lg font-medium mb-4 ${isRunning ? 'text-gray-500' : ''}`}
+          >
+            Mixture Model
+          </h3>
 
           {/* Components Grid */}
           <div className="grid md:grid-cols-2 gap-6 mb-6">
@@ -258,7 +309,7 @@ export default function Controls({
                       onChange={(e) =>
                         handleParameterChange('sigma1', e.target.value)
                       }
-                      min="0.1"
+                      min={PARAMETER_CONSTRAINTS.sigma1.min}
                       step="0.1"
                       className={getInputClass('sigma1')}
                       disabled={isRunning}
@@ -273,7 +324,7 @@ export default function Controls({
                     onChange={(e) =>
                       handleParameterChange('proposalStdDev1', e.target.value)
                     }
-                    min="0.1"
+                    min={PARAMETER_CONSTRAINTS.proposalStdDev1.min}
                     step="0.1"
                     className={getInputClass('proposalStdDev1')}
                     disabled={isRunning}
@@ -310,7 +361,7 @@ export default function Controls({
                       onChange={(e) =>
                         handleParameterChange('sigma2', e.target.value)
                       }
-                      min="0.1"
+                      min={PARAMETER_CONSTRAINTS.sigma2.min}
                       step="0.1"
                       className={getInputClass('sigma2')}
                       disabled={isRunning}
@@ -325,7 +376,7 @@ export default function Controls({
                     onChange={(e) =>
                       handleParameterChange('proposalStdDev2', e.target.value)
                     }
-                    min="0.1"
+                    min={PARAMETER_CONSTRAINTS.proposalStdDev2.min}
                     step="0.1"
                     className={getInputClass('proposalStdDev2')}
                     disabled={isRunning}
@@ -347,8 +398,8 @@ export default function Controls({
                 type="range"
                 value={inputValues.p}
                 onChange={(e) => handleParameterChange('p', e.target.value)}
-                min="0.01"
-                max="0.99"
+                min={PARAMETER_CONSTRAINTS.p.min}
+                max={PARAMETER_CONSTRAINTS.p.max}
                 step="0.01"
                 className={`${getInputClass('p')} ${isRunning ? 'bg-green-50' : ''}`}
                 disabled={isRunning}
@@ -374,8 +425,8 @@ export default function Controls({
                 onChange={(e) =>
                   handleParameterChange('sampleSize', e.target.value)
                 }
-                min="10"
-                max="1000"
+                min={PARAMETER_CONSTRAINTS.sampleSize.min}
+                max={PARAMETER_CONSTRAINTS.sampleSize.max}
                 step="10"
                 className={`${getInputClass('sampleSize')} ${isRunning ? 'bg-green-50' : ''}`}
                 disabled={isRunning}
@@ -387,8 +438,14 @@ export default function Controls({
         {/* Simulation Section */}
         <div className="flex flex-col md:flex-row gap-6">
           {/* Simulation Parameters */}
-          <div className="bg-white p-4 rounded-lg shadow flex-1">
-            <h3 className="text-lg font-medium mb-3">Simulation</h3>
+          <div
+            className={`bg-white p-4 rounded-lg shadow flex-1 ${isRunning ? 'opacity-75' : ''}`}
+          >
+            <h3
+              className={`text-lg font-medium mb-3 ${isRunning ? 'text-gray-500' : ''}`}
+            >
+              Simulation
+            </h3>
             <div className="space-y-3">
               <div className="flex items-center gap-3">
                 <label className="w-32 text-sm font-medium">
@@ -400,7 +457,8 @@ export default function Controls({
                   onChange={(e) =>
                     handleParameterChange('numSteps', e.target.value)
                   }
-                  min="100"
+                  min={PARAMETER_CONSTRAINTS.numSteps.min}
+                  max={PARAMETER_CONSTRAINTS.numSteps.max}
                   step="100"
                   className={getInputClass('numSteps')}
                   disabled={isRunning}
@@ -408,7 +466,7 @@ export default function Controls({
               </div>
               <div className="flex items-center gap-3">
                 <label className="w-32 text-sm font-medium">
-                  Burn-in Period
+                  Burn-In Period
                 </label>
                 <input
                   type="number"
@@ -416,7 +474,8 @@ export default function Controls({
                   onChange={(e) =>
                     handleParameterChange('burnIn', e.target.value)
                   }
-                  min="0"
+                  min={PARAMETER_CONSTRAINTS.burnIn.min}
+                  max={PARAMETER_CONSTRAINTS.burnIn.max}
                   step="10"
                   className={getInputClass('burnIn')}
                   disabled={isRunning}
@@ -438,8 +497,8 @@ export default function Controls({
                 type="range"
                 value={inputValues.delay}
                 onChange={handleDelayChange}
-                min="0"
-                max="1000"
+                min={PARAMETER_CONSTRAINTS.delay.min}
+                max={PARAMETER_CONSTRAINTS.delay.max}
                 step="10"
                 className={`${getInputClass('delay')} ${isRunning ? 'bg-green-50' : ''}`}
               />
