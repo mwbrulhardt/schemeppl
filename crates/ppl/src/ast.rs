@@ -24,7 +24,7 @@ pub enum Expression {
     Quote(Box<Expression>),
     Sample {
         distribution: Box<Expression>,
-        name: String,
+        name: Box<Expression>,
     },
     Observe {
         name: Box<Expression>,

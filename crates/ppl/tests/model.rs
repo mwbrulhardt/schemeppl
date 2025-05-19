@@ -6,6 +6,7 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use statrs::distribution::Normal;
 
+use ppl::utils::compute_mean_and_variance;
 use ppl::{mh, r#gen, Expression, GenerativeFunction, Literal, Value};
 
 #[test]
@@ -20,7 +21,7 @@ fn test_univariate_gaussian_no_parse() {
             Expression::Constant(Literal::Float(0.0)),
             Expression::Constant(Literal::Float(1.0)),
         ])),
-        name: "mu".to_string(),
+        name: Box::new(Expression::Constant(Literal::String("mu".to_string()))),
     }];
 
     for (i, &x) in data.iter().enumerate() {
@@ -42,43 +43,20 @@ fn test_univariate_gaussian_no_parse() {
 
     let mut trace = program.simulate(vec![]).unwrap();
 
-    // Print initial mu
-    if let Value::Float(mu) = trace.get_choice(&"mu".to_string()).value {
-        println!("Initial mu: {}", mu);
-    }
-
     let selection = HashSet::from_iter(vec!["mu".to_string()]);
-    for i in 0..100 {
-        let (new_trace, weight) = mh(&program, trace, &selection).unwrap();
-        if i % 10 == 0 {
-            if let Value::Float(mu) = new_trace.get_choice(&"mu".to_string()).value {
-                println!("Warmup step {}: mu = {}, weight = {}", i, mu, weight);
-            }
-        }
-        trace = new_trace;
+    for _ in 0..100 {
+        let (t, _) = mh(&program, trace, &selection).unwrap();
+        trace = t;
     }
 
-    let mut samples = Vec::new();
-    for i in 0..100 {
-        let (new_trace, accepted) = mh(&program, trace, &selection).unwrap();
-        if i % 10 == 0 {
-            if let Value::Float(mu) = new_trace.get_choice(&"mu".to_string()).value {
-                println!("Sample step {}: mu = {}, accepted = {}", i, mu, accepted);
-            }
-        }
-        if accepted {
-            if let Value::Float(mu) = new_trace.get_choice(&"mu".to_string()).value {
-                samples.push(mu);
-            }
-        }
-        trace = new_trace;
+    let mut history = Vec::new();
+    for _ in 0..100 {
+        let (t, _) = mh(&program, trace, &selection).unwrap();
+        trace = t;
+        history.push(trace.clone());
     }
 
-    let mean: f64 = samples.iter().sum::<f64>() / samples.len() as f64;
-    let variance: f64 =
-        samples.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / samples.len() as f64;
-
-    println!("(Gaussian) mu mean: {:.3}, var: {:.3}", mean, variance);
+    let (mean, variance) = compute_mean_and_variance(&history, &"mu".to_string());
 
     assert!((mean - 5.0).abs() < 0.5);
     assert!(variance > 0.0 && variance < 2.0);
@@ -111,10 +89,6 @@ fn test_gmm_no_parse() {
         .map(|i| if z[i] { c1[i] } else { c2[i] })
         .collect();
 
-    for (i, x) in data.iter().enumerate() {
-        println!("(observe x{:?} mix {:?})", i, x)
-    }
-
     // Define model
     let mut model = vec![Expression::Define(
         "p".to_string(),
@@ -127,7 +101,7 @@ fn test_gmm_no_parse() {
             Expression::Constant(Literal::Float(0.0)),
             Expression::Constant(Literal::Float(1.0)),
         ])),
-        name: "mu1".to_string(),
+        name: Box::new(Expression::Constant(Literal::String("mu1".to_string()))),
     });
 
     model.push(Expression::Sample {
@@ -136,7 +110,7 @@ fn test_gmm_no_parse() {
             Expression::Constant(Literal::Float(0.0)),
             Expression::Constant(Literal::Float(1.0)),
         ])),
-        name: "mu2".to_string(),
+        name: Box::new(Expression::Constant(Literal::String("mu2".to_string()))),
     });
 
     let logic = Expression::List(vec![
@@ -200,80 +174,24 @@ fn test_gmm_no_parse() {
 
     let mut trace = program.simulate(vec![]).unwrap();
 
-    // Print initial mu
-    if let Value::Float(mu1) = trace.get_choice(&"mu1".to_string()).value {
-        println!("Initial mu1: {}", mu1);
-    }
-    if let Value::Float(mu2) = trace.get_choice(&"mu2".to_string()).value {
-        println!("Initial mu1: {}", mu2);
-    }
-
     let selection = HashSet::from_iter(vec!["mu1".to_string(), "mu2".to_string()]);
-    for i in 0..n {
-        let (new_trace, weight) = mh(&program, trace, &selection).unwrap();
-        if i % 10 == 0 {
-            if let Value::Float(mu1) = new_trace.get_choice(&"mu1".to_string()).value {
-                println!("Warmup step {}: mu1 = {}, weight = {}", i, mu1, weight);
-            }
-            if let Value::Float(mu2) = new_trace.get_choice(&"mu2".to_string()).value {
-                println!("Warmup step {}: mu2 = {}, weight = {}", i, mu2, weight);
-            }
-        }
-        trace = new_trace;
+    for _ in 0..n {
+        let (t, _) = mh(&program, trace, &selection).unwrap();
+        trace = t;
     }
 
-    let mut samples_mu1 = Vec::new();
-    let mut samples_mu2 = Vec::new();
-    for i in 0..n {
-        let (new_trace, accepted) = mh(&program, trace, &selection).unwrap();
-        if i % 10 == 0 {
-            if let Value::Float(mu1) = new_trace.get_choice(&"mu1".to_string()).value {
-                println!("Sample step {}: mu = {}, accepted = {}", i, mu1, accepted);
-            }
-            if let Value::Float(mu2) = new_trace.get_choice(&"mu2".to_string()).value {
-                println!("Sample step {}: mu = {}, accepted = {}", i, mu2, accepted);
-            }
-        }
-        if accepted {
-            if let Value::Float(mu1) = new_trace.get_choice(&"mu1".to_string()).value {
-                samples_mu1.push(mu1);
-            }
-            if let Value::Float(mu2) = new_trace.get_choice(&"mu2".to_string()).value {
-                samples_mu2.push(mu2);
-            }
-        }
-        trace = new_trace;
+    let mut history = Vec::with_capacity(n);
+    for _ in 0..n {
+        let (t, _) = mh(&program, trace, &selection).unwrap();
+        trace = t;
+        history.push(trace.clone());
     }
 
-    println!("Samples Mean 1: {:?}", samples_mu1);
-
-    let mean_mu1: f64 = samples_mu1.iter().sum::<f64>() / samples_mu1.len() as f64;
-
-    let variance_mu1: f64 = samples_mu1
-        .iter()
-        .map(|x| (x - mean_mu1).powi(2))
-        .sum::<f64>()
-        / samples_mu1.len() as f64;
-
-    println!(
-        "(Gaussian) mu1 mean: {:.3}, var: {:.3}",
-        mean_mu1, variance_mu1
-    );
+    let (mean_mu1, variance_mu1) = compute_mean_and_variance(&history, &"mu1".to_string());
+    let (mean_mu2, variance_mu2) = compute_mean_and_variance(&history, &"mu2".to_string());
 
     assert!((mean_mu1 + 1.0).abs() < 0.5);
     assert!(variance_mu1 > 0.0 && variance_mu1 < 2.0);
-
-    let mean_mu2: f64 = samples_mu2.iter().sum::<f64>() / samples_mu2.len() as f64;
-    let variance_mu2: f64 = samples_mu2
-        .iter()
-        .map(|x| (x - mean_mu2).powi(2))
-        .sum::<f64>()
-        / samples_mu2.len() as f64;
-
-    println!(
-        "(Gaussian) mu2 mean: {:.3}, var: {:.3}",
-        mean_mu2, variance_mu2
-    );
 
     assert!((mean_mu2 - 1.0).abs() < 0.5);
     assert!(variance_mu2 > 0.0 && variance_mu2 < 2.0);
@@ -282,8 +200,8 @@ fn test_gmm_no_parse() {
 #[test]
 fn test_gmm_parse() {
     const SEED: u64 = 42;
-    const BURN_IN: usize = 2_000;
-    const DRAW: usize = 2_000;
+    const BURN_IN: usize = 100;
+    const DRAW: usize = 1000;
     const PROP_SD: f64 = 0.15;
 
     let data_seed = 40;
@@ -307,10 +225,13 @@ fn test_gmm_parse() {
         .map(|_| component2.sample(&mut rng))
         .collect();
 
-    let data: Vec<f64> = (0..num_samples)
-        .map(|i| if z[i] { c1[i] } else { c2[i] })
-        .collect();
-    let wrapped_data = Value::List(data.clone().into_iter().map(|x| Value::Float(x)).collect());
+    let data = Value::List(
+        (0..num_samples)
+            .map(|i| if z[i] { c1[i] } else { c2[i] })
+            .into_iter()
+            .map(|x| Value::Float(x))
+            .collect(),
+    );
 
     let model = gen!(
         // Priors
@@ -339,7 +260,7 @@ fn test_gmm_parse() {
     let program = GenerativeFunction::new(model, vec!["data".to_string()], scales, SEED);
 
     let selection = HashSet::from_iter(vec![mu1_name.clone(), mu2_name.clone()]);
-    let mut trace = program.simulate(vec![wrapped_data]).unwrap();
+    let mut trace = program.simulate(vec![data]).unwrap();
     for _ in 0..BURN_IN {
         let (t, _) = mh(&program, trace, &selection).unwrap();
         trace = t;
@@ -357,39 +278,11 @@ fn test_gmm_parse() {
         history.push(trace.clone());
     }
 
-    println!("Acceptence Rate: {:.3}", num_accepted as f64 / DRAW as f64);
+    let acceptance_rate = num_accepted as f64 / DRAW as f64;
+    assert!(acceptance_rate > 0.2 && acceptance_rate < 0.8);
 
-    let mean_mu1: f64 = history
-        .iter()
-        .map(|t| t.get_choice(&mu1_name).value.expect_float())
-        .sum::<f64>()
-        / history.len() as f64;
-    let variance_mu1: f64 = history
-        .iter()
-        .map(|t| (t.get_choice(&mu1_name).value.expect_float() - mean_mu1).powi(2))
-        .sum::<f64>()
-        / history.len() as f64;
-
-    println!(
-        "(Gaussian) mu1 mean: {:.3}, var: {:.3}",
-        mean_mu1, variance_mu1
-    );
-
-    let mean_mu2: f64 = history
-        .iter()
-        .map(|t| t.get_choice(&mu2_name).value.expect_float())
-        .sum::<f64>()
-        / history.len() as f64;
-    let variance_mu2: f64 = history
-        .iter()
-        .map(|t| (t.get_choice(&mu2_name).value.expect_float() - mean_mu2).powi(2))
-        .sum::<f64>()
-        / history.len() as f64;
-
-    println!(
-        "(Gaussian) mu2 mean: {:.3}, var: {:.3}",
-        mean_mu2, variance_mu2
-    );
+    let (mean_mu1, variance_mu1) = compute_mean_and_variance(&history, &mu1_name);
+    let (mean_mu2, variance_mu2) = compute_mean_and_variance(&history, &mu2_name);
 
     assert!((mean_mu1 - mu1).abs() < 0.5);
     assert!(variance_mu1 > 0.0 && variance_mu1 < 2.0);

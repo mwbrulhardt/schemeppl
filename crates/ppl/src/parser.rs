@@ -75,9 +75,15 @@ impl TryFrom<lexpr::Value> for Expression {
                     }
 
                     // (sample name dist)
-                    [Expression::Variable(k), Expression::Variable(name), dist]
-                        if k == "sample" =>
-                    {
+                    [Expression::Variable(k), name, dist] if k == "sample" => {
+                        // Either a string expression or a function call that evaluates to a string
+                        let name = match name {
+                            Expression::Variable(symbol) => {
+                                Expression::Constant(Literal::String(symbol.clone()))
+                            }
+                            _ => name.clone(),
+                        };
+
                         Expression::Sample {
                             distribution: Box::new(dist.clone()),
                             name: name.into(),
@@ -86,6 +92,14 @@ impl TryFrom<lexpr::Value> for Expression {
 
                     // (observe name dist value)
                     [Expression::Variable(k), name, dist, expr] if k == "observe" => {
+                        // Either a string expression or a function call that evaluates to a string
+                        let name = match name {
+                            Expression::Variable(symbol) => {
+                                Expression::Constant(Literal::String(symbol.clone()))
+                            }
+                            _ => name.clone(),
+                        };
+
                         Expression::Observe {
                             name: Box::new(name.clone()),
                             distribution: Box::new(dist.clone()),
@@ -163,18 +177,6 @@ mod tests {
     use crate::{mh, GenerativeFunction, Value};
 
     #[test]
-    fn test_define() {
-        let exprs = gen!(
-            (define x 5.0)
-            (define y 6.0)
-        );
-
-        println!("Expr: {:?}", exprs);
-
-        //assert!(Expression::Define("x".into(), ()))
-    }
-
-    #[test]
     fn test_mixture() {
         let exprs = gen!(
             (mixture (list (normal mu1 1.0) (normal mu2 1.0)) (list p (- 1.0 p)))
@@ -242,42 +244,6 @@ mod tests {
         ]);
 
         assert_eq!(exprs[0], mixture);
-
-        println!("Expr: {:?}", exprs);
-    }
-
-    #[test]
-    fn test_for_each() {
-        let data = vec![
-            0.89114093,
-            0.264701206,
-            1.229336011,
-            0.781903503,
-            0.442450484,
-            -2.007232581,
-            1.920186601,
-            1.657035609,
-            1.131176314,
-            1.532964528,
-            -1.959504631,
-        ];
-        let wrapped_data = Value::List(data.into_iter().map(|x| Value::Float(x)).collect());
-
-        let model = gen!(
-            (sample mu (normal 0.0 1.0))
-
-            (define observe-point (lambda (x) (observe (gensym) (normal mu 1.0) x)))
-
-            (for-each observe-point data)
-        );
-
-        println!("Model: {:?}", model);
-
-        let program = GenerativeFunction::new(model, vec!["data".to_string()], HashMap::new(), 42);
-
-        let trace = program.simulate(vec![wrapped_data]).unwrap();
-
-        println!("Trace: {:?}", trace);
     }
 
     #[test]
@@ -290,7 +256,7 @@ mod tests {
             (sample mu2 (normal 0.0 1.0))
 
             // Ordering
-            (condition (< mu1 mu2))
+            (constrain (< mu1 mu2))
 
             // Mixture
             (define p 0.5)
@@ -500,8 +466,8 @@ mod tests {
         );
 
         let mut scales = HashMap::new();
-        scales.insert("mu1".to_string(), 1.0);
-        scales.insert("mu2".to_string(), 1.0);
+        scales.insert("mu1".to_string(), 0.15);
+        scales.insert("mu2".to_string(), 0.15);
 
         let program = GenerativeFunction::new(model, vec![], scales, 42);
 
@@ -630,8 +596,8 @@ mod tests {
         );
 
         let mut scales = HashMap::new();
-        scales.insert("mu1".to_string(), 1.0);
-        scales.insert("mu2".to_string(), 1.0);
+        scales.insert("mu1".to_string(), 0.15);
+        scales.insert("mu2".to_string(), 0.15);
 
         let program = GenerativeFunction::new(model, vec!["data".to_string()], scales, 42);
 

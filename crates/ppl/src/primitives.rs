@@ -384,7 +384,7 @@ impl ValueDistribution {
 pub fn create_distribution(name: &str, args: &[Value]) -> Result<ValueDistribution, String> {
     match name.to_lowercase().as_str() {
         // Continuous (f64) distributions
-        "normal" | "gaussian" => {
+        "normal" => {
             let normal = statrs::distribution::Normal::parse(args)?;
             Ok(ValueDistribution::Continuous(Box::new(normal)))
         }
@@ -449,10 +449,6 @@ mod tests {
         // Test creating with case-insensitive name
         let normal_dist2 = create_distribution("NoRmAl", &normal_args).unwrap();
         assert!(normal_dist2.as_continuous().is_ok());
-
-        // Test creating with an alias
-        let normal_dist3 = create_distribution("gaussian", &normal_args).unwrap();
-        assert!(normal_dist3.as_continuous().is_ok());
 
         // Test creating a Bernoulli distribution (discrete/bool)
         let bernoulli_args = vec![Value::Float(0.7)];

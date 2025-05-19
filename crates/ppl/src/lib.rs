@@ -4,6 +4,7 @@ pub mod eval;
 pub mod parser;
 pub mod primitives;
 pub mod trace;
+pub mod utils;
 
 pub use ast::{Env, Expression, HostFn, Literal, Procedure, Value};
 pub use eval::{mh, GenerativeFunction};

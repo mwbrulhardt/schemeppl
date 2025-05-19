@@ -88,8 +88,18 @@ pub fn eval(
         Expression::Quote(expr) => Ok(Value::Expr(*expr)),
 
         Expression::Sample { distribution, name } => {
-            // Evaluate the distribution
+            // Evaluate the expressions
+            let name = eval(*name, env.clone(), trace, rng)?;
             let dist = eval(*distribution, env.clone(), trace, rng)?;
+
+            // Get the address of the name
+            let addr = match name {
+                Value::String(s) => s,
+                Value::Procedure(_) | Value::List(_) | Value::Env(_) | Value::Expr(_) => {
+                    return Err("sample: name must evaluate to a string".into())
+                }
+                other => format!("{:?}", other),
+            };
 
             // Get the stochastic procedure and sample from it
             match dist {
@@ -103,7 +113,7 @@ pub fn eval(
                     let score = dist.log_prob(&value)?;
 
                     // Add to trace
-                    trace.add_choice(name.clone(), value.clone(), score);
+                    trace.add_choice(addr.clone(), value.clone(), score);
                     Ok(value)
                 }
                 _ => Err("Sample distribution must yield a distribution".to_string()),
@@ -167,7 +177,7 @@ pub fn eval(
                 apply(proc.clone(), arg, trace, rng)?;
             }
 
-            // Return a Scheme-style “unit” – the empty list '()
+            // Return a Scheme-style "unit" – the empty list '()
             return Ok(Value::List(vec![]));
         }
     }
@@ -312,6 +322,28 @@ pub fn standard_env() -> Rc<RefCell<Env>> {
     env
 }
 
+/// A probabilistic *generative function* — the core abstraction of this PPL runtime.
+///
+/// The public interface (`simulate`, `generate`, `regenerate`, `propose`, and the
+/// helper `rand`) is modelled after the generative-function interface of the
+/// [Gen probabilistic programming system](https://github.com/probcomp/Gen.jl/blob/master/src/gen_fn_interface.jl).
+/// Having the same conceptual API makes it easier to port inference code and
+/// intuition from Gen.jl to this Rust implementation.
+///
+/// In short:
+/// • `simulate`  — run the model forward and return a complete execution trace.
+/// • `generate`  — run the model under soft constraints and return the trace and
+///   its log-probability.
+/// • `regenerate` — locally modify an existing trace by resampling a subset of
+///   stochastic choices (mirroring Gen's `regenerate`).
+/// • `propose`   — draw an initial trace together with an importance weight.
+///
+/// The struct stores the model body (`exprs`) as a vector of Scheme AST nodes,
+/// the list of argument names expected by the model, per-choice scale
+/// parameters used by proposal mechanisms, and an RNG.
+///
+/// See the linked Gen.jl source for the authoritative reference on the design
+/// of these methods.
 #[derive(Debug, Clone)]
 pub struct GenerativeFunction {
     exprs: Vec<Expression>,
@@ -398,12 +430,25 @@ impl GenerativeFunction {
             for expr in &self.exprs {
                 match expr {
                     Expression::Sample { distribution, name } => {
-                        if constraints.contains_key(name) {
+                        let name = eval(*name.clone(), env.clone(), &mut trace, &mut *rng)?;
+
+                        let addr = match name {
+                            Value::String(s) => s,
+                            Value::Procedure(_)
+                            | Value::List(_)
+                            | Value::Env(_)
+                            | Value::Expr(_) => {
+                                return Err("sample: name must evaluate to a string".into())
+                            }
+                            other => format!("{:?}", other),
+                        };
+
+                        if constraints.contains_key(&addr) {
                             // Evaluate the distribution
                             let dist =
                                 eval(*distribution.clone(), env.clone(), &mut trace, &mut *rng)?;
 
-                            let val = constraints[name];
+                            let val = constraints[&addr];
                             let score = match dist {
                                 Value::Procedure(Procedure::Stochastic {
                                     name: dist_name,
@@ -421,7 +466,7 @@ impl GenerativeFunction {
                                 }
                             };
 
-                            trace.add_choice(name.clone(), Value::Float(val), score);
+                            trace.add_choice(addr.clone(), Value::Float(val), score);
                         } else {
                             eval(expr.clone(), env.clone(), &mut trace, &mut *rng)?;
                         }

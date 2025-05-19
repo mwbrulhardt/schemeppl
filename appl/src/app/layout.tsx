@@ -14,7 +14,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: 'Metropolis-Hastings GMM',
-  description: 'An app for visualizing the Metropolis-Hastings algorithm with Gaussian Mixture Models.',
+  description:
+    'An app for visualizing the Metropolis-Hastings algorithm with Gaussian Mixture Models.',
 };
 
 export default function RootLayout({

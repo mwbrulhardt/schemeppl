@@ -1,3 +1,11 @@
+//! Trace data structures and utilities.
+//!
+//! This module was implemented with reference to Gen.jl's dynamic `trace.jl`:
+//! https://github.com/probcomp/Gen.jl/blob/master/src/dynamic/trace.jl
+//! The original Julia code is released under the MIT License. This Rust
+//! translation re-implements similar concepts and data structures, with
+//! adaptations as necessary.
+
 use std::fmt::Debug;
 use std::hash::Hash;
 
