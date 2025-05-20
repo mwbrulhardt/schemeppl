@@ -500,7 +500,7 @@ export default function Controls({
                 min={PARAMETER_CONSTRAINTS.delay.min}
                 max={PARAMETER_CONSTRAINTS.delay.max}
                 step="10"
-                className={`${getInputClass('delay')} ${isRunning ? 'bg-green-50' : ''}`}
+                className="w-full p-2 border rounded"
               />
               <div className="flex justify-between text-xs text-gray-500 mt-1">
                 <span>Fast</span>
