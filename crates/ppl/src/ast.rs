@@ -215,3 +215,91 @@ impl Value {
         }
     }
 }
+
+// Conversion traits for Value <-> Literal
+impl From<Literal> for Value {
+    fn from(literal: Literal) -> Self {
+        match literal {
+            Literal::Boolean(b) => Value::Boolean(b),
+            Literal::Integer(i) => Value::Integer(i),
+            Literal::Float(f) => Value::Float(f),
+            Literal::String(s) => Value::String(s),
+        }
+    }
+}
+
+impl TryFrom<Value> for Literal {
+    type Error = String;
+    
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Boolean(b) => Ok(Literal::Boolean(b)),
+            Value::Integer(i) => Ok(Literal::Integer(i)),
+            Value::Float(f) => Ok(Literal::Float(f)),
+            Value::String(s) => Ok(Literal::String(s)),
+            _ => Err(format!("Cannot convert {:?} to Literal", value)),
+        }
+    }
+}
+
+// Convenience conversions for common cases
+impl From<bool> for Literal {
+    fn from(b: bool) -> Self {
+        Literal::Boolean(b)
+    }
+}
+
+impl From<i64> for Literal {
+    fn from(i: i64) -> Self {
+        Literal::Integer(i)
+    }
+}
+
+impl From<f64> for Literal {
+    fn from(f: f64) -> Self {
+        Literal::Float(f)
+    }
+}
+
+impl From<String> for Literal {
+    fn from(s: String) -> Self {
+        Literal::String(s)
+    }
+}
+
+impl From<&str> for Literal {
+    fn from(s: &str) -> Self {
+        Literal::String(s.to_string())
+    }
+}
+
+// Similar convenience conversions for Value
+impl From<bool> for Value {
+    fn from(b: bool) -> Self {
+        Value::Boolean(b)
+    }
+}
+
+impl From<i64> for Value {
+    fn from(i: i64) -> Self {
+        Value::Integer(i)
+    }
+}
+
+impl From<f64> for Value {
+    fn from(f: f64) -> Self {
+        Value::Float(f)
+    }
+}
+
+impl From<String> for Value {
+    fn from(s: String) -> Self {
+        Value::String(s)
+    }
+}
+
+impl From<&str> for Value {
+    fn from(s: &str) -> Self {
+        Value::String(s.to_string())
+    }
+}

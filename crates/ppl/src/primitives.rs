@@ -173,6 +173,40 @@ pub fn display(v: Vec<Value>) -> Result<Value, String> {
     Ok(Value::List(vec![]))
 }
 
+pub fn car(args: Vec<Value>) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("car expects exactly 1 argument".to_string());
+    }
+
+    match &args[0] {
+        Value::List(list) => {
+            if list.is_empty() {
+                Err("car: cannot take car of empty list".to_string())
+            } else {
+                Ok(list[0].clone())
+            }
+        }
+        _ => Err("car expects a list argument".to_string()),
+    }
+}
+
+pub fn cdr(args: Vec<Value>) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("cdr expects exactly 1 argument".to_string());
+    }
+
+    match &args[0] {
+        Value::List(list) => {
+            if list.is_empty() {
+                Err("cdr: cannot take cdr of empty list".to_string())
+            } else {
+                Ok(Value::List(list[1..].to_vec()))
+            }
+        }
+        _ => Err("cdr expects a list argument".to_string()),
+    }
+}
+
 pub trait Parseable: Sized {
     fn parse(args: &[Value]) -> Result<Self, String>;
 }

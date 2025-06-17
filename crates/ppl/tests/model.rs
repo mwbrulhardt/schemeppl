@@ -7,7 +7,7 @@ use rand::SeedableRng;
 use statrs::distribution::Normal;
 
 use ppl::utils::compute_mean_and_variance;
-use ppl::{mh, r#gen, Expression, GenerativeFunction, Literal, Value};
+use ppl::{mh, r#gen, Expression, SchemeGenerativeFunction, Literal, Value};
 
 #[test]
 fn test_univariate_gaussian_no_parse() {
@@ -39,7 +39,7 @@ fn test_univariate_gaussian_no_parse() {
     let mut scales = HashMap::new();
     scales.insert("mu".to_string(), 1.0);
 
-    let program = GenerativeFunction::new(model, vec![], scales, 42);
+    let program = SchemeGenerativeFunction::new(model, vec![], 42);
 
     let mut trace = program.simulate(vec![]).unwrap();
 
@@ -170,7 +170,7 @@ fn test_gmm_no_parse() {
     scales.insert("mu1".to_string(), 1.0);
     scales.insert("mu2".to_string(), 1.0);
 
-    let program = GenerativeFunction::new(model, vec![], scales, 42);
+    let program = SchemeGenerativeFunction::new(model, vec![], 42);
 
     let mut trace = program.simulate(vec![]).unwrap();
 
@@ -257,7 +257,7 @@ fn test_gmm_parse() {
     scales.insert(mu1_name.clone(), PROP_SD);
     scales.insert(mu2_name.clone(), PROP_SD);
 
-    let program = GenerativeFunction::new(model, vec!["data".to_string()], scales, SEED);
+    let program = SchemeGenerativeFunction::new(model, vec!["data".to_string()], 42);
 
     let selection = HashSet::from_iter(vec![mu1_name.clone(), mu2_name.clone()]);
     let mut trace = program.simulate(vec![data]).unwrap();

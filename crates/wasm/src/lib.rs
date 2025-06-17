@@ -1,7 +1,7 @@
 use js_sys::Float64Array;
 use wasm_bindgen::prelude::*;
 
-use ppl::{mh, parse_string, GenerativeFunction, Trace, Value};
+use ppl::{mh, metropolis_hastings as mh_with_check, parse_string, GenerativeFunction, Trace, Value, ChoiceMap, ChoiceOrCallRecord};
 
 use ppl::distributions::DistributionExtended;
 
@@ -68,20 +68,11 @@ pub struct JsGenerativeFunction {
 #[wasm_bindgen]
 impl JsGenerativeFunction {
     #[wasm_bindgen(constructor)]
-    pub fn new(src: String, scales: &Object, seed: u64) -> JsGenerativeFunction {
+    pub fn new(src: String, _scales: &Object, seed: u64) -> JsGenerativeFunction {
         let exprs = parse_string(&src);
 
-        let mut scales_map = HashMap::new();
-        let keys = js_sys::Object::keys(scales);
-        for i in 0..keys.length() {
-            let key = keys.get(i);
-            let key_str = key.as_string().unwrap();
-            let value = Reflect::get(scales, &key).unwrap();
-            let value_f64 = value.as_f64().unwrap();
-            scales_map.insert(key_str, value_f64);
-        }
-
-        let gf = GenerativeFunction::new(exprs, vec!["data".into()], scales_map, seed);
+        // Note: scales parameter is ignored since custom proposal logic was removed
+        let gf = GenerativeFunction::new(exprs, vec!["data".into()], seed);
 
         JsGenerativeFunction { inner: gf }
     }
@@ -170,13 +161,74 @@ impl JsTrace {
 }
 
 #[wasm_bindgen]
-pub fn metropolis_hastings(
+pub fn metropolis_hastings_simple(
     program: &JsGenerativeFunction,
     trace: &JsTrace,
     selection: &js_sys::Array,
 ) -> Result<js_sys::Array, JsValue> {
     let sel: HashSet<String> = selection.iter().filter_map(|v| v.as_string()).collect();
-    let (next, accepted) = mh(&program.inner, trace.inner.clone(), &sel)?;
+    let (next, accepted) = mh(&program.inner, trace.inner.clone(), &sel)
+        .map_err(|e| JsValue::from_str(&e))?;
+
+    let result = js_sys::Array::new();
+    result.push(&JsTrace { inner: next }.into());
+    result.push(&JsValue::from_bool(accepted));
+    Ok(result)
+}
+
+/// Backward compatible alias for metropolis_hastings_simple
+#[wasm_bindgen]
+pub fn metropolis_hastings(
+    program: &JsGenerativeFunction,
+    trace: &JsTrace,
+    selection: &js_sys::Array,
+) -> Result<js_sys::Array, JsValue> {
+    metropolis_hastings_simple(program, trace, selection)
+}
+
+#[wasm_bindgen]
+pub fn metropolis_hastings_with_check(
+    program: &JsGenerativeFunction,
+    trace: &JsTrace,
+    selection: &js_sys::Array,
+    check: bool,
+    observations: &Object,
+) -> Result<js_sys::Array, JsValue> {
+    let sel: HashSet<String> = selection.iter().filter_map(|v| v.as_string()).collect();
+    
+    // Convert observations Object to ChoiceMap
+    let obs_map = if check {
+        let mut choices = HashMap::new();
+        let keys = js_sys::Object::keys(observations);
+        for i in 0..keys.length() {
+            let key = keys.get(i);
+            let key_str = key.as_string().unwrap();
+            let value = Reflect::get(observations, &key).unwrap();
+            let value_f64 = value.as_f64().unwrap();
+            
+            // Create a choice record for the observation
+            choices.insert(
+                key_str,
+                ChoiceOrCallRecord {
+                    subtrace_or_retval: Value::Float(value_f64),
+                    score: 0.0,
+                    noise: f64::NAN,
+                    is_choice: true,
+                },
+            );
+        }
+        ChoiceMap::new(choices)
+    } else {
+        ChoiceMap::new(HashMap::new())
+    };
+
+    let (next, accepted) = mh_with_check(
+        trace.inner.clone(),
+        &sel,
+        check,
+        &obs_map,
+    )
+    .map_err(|e| JsValue::from_str(&e))?;
 
     let result = js_sys::Array::new();
     result.push(&JsTrace { inner: next }.into());

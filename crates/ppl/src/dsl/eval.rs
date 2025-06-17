@@ -1,26 +1,20 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::fmt::Debug;
-
-use nalgebra::{Cholesky, DMatrix, DVector};
-use rand::distributions::Distribution;
-use rand::rngs::StdRng;
-use rand::Rng;
 use rand::RngCore;
-use rand::SeedableRng;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::ast::{Env, Expression, HostFn, Literal, Procedure, Value};
 use crate::primitives::create_distribution;
 use crate::primitives::*;
-use crate::r#gen;
-use crate::trace::{ChoiceMap, Trace};
+use crate::dsl::trace::SchemeDSLTrace;
+use crate::core::address::Address;
+use crate::core::gfi::Trace;
 
+/// Evaluates an expression against an environment, using the specified trace and random number generator.
+/// The function is a monadic recursive evaluator, updating the trace with stochastic choices made during evaluation.
 pub fn eval(
     expr: Expression,
     env: Rc<RefCell<Env>>,
-    trace: &mut Trace<GenerativeFunction, String, Value>,
+    trace: &mut SchemeDSLTrace,
     rng: &mut dyn RngCore,
 ) -> Result<Value, String> {
     match expr {
@@ -34,10 +28,11 @@ pub fn eval(
 
         // Variables evaluate to their corresponding values in the environment
         Expression::Variable(name) => {
-            if trace.choices.contains_key(&name) {
-                // use a helper that returns the stored Value regardless of is_choice
-                let val = trace.get_value(&name);
-                return Ok(val);
+            let addr = Address::Symbol(name.clone());
+            if trace.get_choices().contains(&addr) {
+                if let Some(val) = trace.get_choice_value(&addr) {
+                    return Ok(val);
+                }
             }
 
             if let Some(value) = env.borrow().get(&name) {
@@ -113,7 +108,7 @@ pub fn eval(
                     let score = dist.log_prob(&value)?;
 
                     // Add to trace
-                    trace.add_choice(addr.clone(), value.clone(), score);
+                    let _ = trace.add_choice(Address::Symbol(addr), value.clone(), score);
                     Ok(value)
                 }
                 _ => Err("Sample distribution must yield a distribution".to_string()),
@@ -152,7 +147,7 @@ pub fn eval(
             };
 
             // Add to trace and return the observed value
-            trace.add_choice(addr.clone(), value.clone(), score);
+            let _ = trace.add_choice(Address::Symbol(addr), value.clone(), score);
             Ok(value)
         }
 
@@ -186,7 +181,7 @@ pub fn eval(
 pub fn apply(
     func: Value,
     args: Vec<Value>,
-    trace: &mut Trace<GenerativeFunction, String, Value>,
+    trace: &mut SchemeDSLTrace,
     rng: &mut dyn RngCore,
 ) -> Result<Value, String> {
     match func {
@@ -286,6 +281,16 @@ pub fn standard_env() -> Rc<RefCell<Env>> {
         Value::Procedure(Procedure::Deterministic { func: wrap(list) }),
     );
 
+    env.borrow_mut().set(
+        "car",
+        Value::Procedure(Procedure::Deterministic { func: wrap(car) }),
+    );
+
+    env.borrow_mut().set(
+        "cdr",
+        Value::Procedure(Procedure::Deterministic { func: wrap(cdr) }),
+    );
+
     // Distribution Primitives
     env.borrow_mut().set(
         "normal",
@@ -320,250 +325,4 @@ pub fn standard_env() -> Rc<RefCell<Env>> {
     );
 
     env
-}
-
-/// A probabilistic *generative function* — the core abstraction of this PPL runtime.
-///
-/// The public interface (`simulate`, `generate`, `regenerate`, `propose`, and the
-/// helper `rand`) is modelled after the generative-function interface of the
-/// [Gen probabilistic programming system](https://github.com/probcomp/Gen.jl/blob/master/src/gen_fn_interface.jl).
-/// Having the same conceptual API makes it easier to port inference code and
-/// intuition from Gen.jl to this Rust implementation.
-///
-/// In short:
-/// • `simulate`  — run the model forward and return a complete execution trace.
-/// • `generate`  — run the model under soft constraints and return the trace and
-///   its log-probability.
-/// • `regenerate` — locally modify an existing trace by resampling a subset of
-///   stochastic choices (mirroring Gen's `regenerate`).
-/// • `propose`   — draw an initial trace together with an importance weight.
-///
-/// The struct stores the model body (`exprs`) as a vector of Scheme AST nodes,
-/// the list of argument names expected by the model, per-choice scale
-/// parameters used by proposal mechanisms, and an RNG.
-///
-/// See the linked Gen.jl source for the authoritative reference on the design
-/// of these methods.
-#[derive(Debug, Clone)]
-pub struct GenerativeFunction {
-    exprs: Vec<Expression>,
-    argument_names: Vec<String>,
-    scales: HashMap<String, f64>,
-    rng: RefCell<StdRng>,
-}
-
-impl GenerativeFunction {
-    pub fn new(
-        exprs: Vec<Expression>,
-        argument_names: Vec<String>,
-        scales: HashMap<String, f64>,
-        seed: u64,
-    ) -> Self {
-        Self {
-            exprs,
-            argument_names,
-            scales,
-            rng: RefCell::new(StdRng::seed_from_u64(seed)),
-        }
-    }
-
-    #[inline]
-    pub fn rand(&self) -> std::cell::RefMut<'_, StdRng> {
-        self.rng.borrow_mut()
-    }
-
-    fn stdlib(
-        &self,
-        trace: &mut Trace<GenerativeFunction, String, Value>,
-        rng: &mut dyn RngCore,
-    ) -> Rc<RefCell<Env>> {
-        let env = standard_env();
-
-        let lib = gen!(
-            (define gensym (make-gensym))
-            (define constrain (lambda (x) (observe (gensym) (condition #t) x)))
-        );
-
-        for expr in lib.iter() {
-            let _ = eval(expr.clone(), env.clone(), trace, rng);
-        }
-
-        env
-    }
-
-    pub fn simulate(&self, args: Vec<Value>) -> Result<Trace<Self, String, Value>, String> {
-        let mut trace = Trace::new(self.clone(), args.clone());
-
-        {
-            let mut rng = self.rand();
-
-            let env = self.stdlib(&mut trace, &mut *rng);
-
-            for (name, arg) in self.argument_names.iter().zip(args) {
-                env.borrow_mut().set(name, arg.clone());
-            }
-
-            for expr in self.exprs.iter() {
-                eval(expr.clone(), env.clone(), &mut trace, &mut *rng)?;
-            }
-        }
-
-        Ok(trace)
-    }
-
-    pub fn generate(
-        &self,
-        args: Vec<Value>,
-        constraints: HashMap<String, f64>,
-    ) -> Result<(Trace<Self, String, Value>, f64), String> {
-        let mut trace = Trace::new(self.clone(), args.clone());
-
-        {
-            let mut rng = self.rand();
-            let env = self.stdlib(&mut trace, &mut *rng);
-
-            // Set arguments in environment
-            for (name, arg) in self.argument_names.iter().zip(args) {
-                env.borrow_mut().set(name, arg.clone());
-            }
-
-            for expr in &self.exprs {
-                match expr {
-                    Expression::Sample { distribution, name } => {
-                        let name = eval(*name.clone(), env.clone(), &mut trace, &mut *rng)?;
-
-                        let addr = match name {
-                            Value::String(s) => s,
-                            Value::Procedure(_)
-                            | Value::List(_)
-                            | Value::Env(_)
-                            | Value::Expr(_) => {
-                                return Err("sample: name must evaluate to a string".into())
-                            }
-                            other => format!("{:?}", other),
-                        };
-
-                        if constraints.contains_key(&addr) {
-                            // Evaluate the distribution
-                            let dist =
-                                eval(*distribution.clone(), env.clone(), &mut trace, &mut *rng)?;
-
-                            let val = constraints[&addr];
-                            let score = match dist {
-                                Value::Procedure(Procedure::Stochastic {
-                                    name: dist_name,
-                                    args,
-                                    ..
-                                }) => {
-                                    let args = args.unwrap_or_default();
-                                    let dist = create_distribution(&dist_name, &args)?;
-                                    dist.log_prob(&Value::Float(val))?
-                                }
-                                _ => {
-                                    return Err(
-                                        "Sample distribution must yield a distribution".to_string()
-                                    )
-                                }
-                            };
-
-                            trace.add_choice(addr.clone(), Value::Float(val), score);
-                        } else {
-                            eval(expr.clone(), env.clone(), &mut trace, &mut *rng)?;
-                        }
-                    }
-                    _ => {
-                        eval(expr.clone(), env.clone(), &mut trace, &mut *rng)?;
-                    }
-                }
-            }
-        }
-
-        Ok((trace.clone(), trace.get_score()))
-    }
-
-    pub fn regenerate(
-        &self,
-        trace: Trace<Self, String, Value>,
-        selection: &HashSet<String>,
-    ) -> Result<(Trace<Self, String, Value>, f64), String> {
-        let old_score = trace.get_score();
-        let args = trace.get_args().clone();
-
-        let mut keys: Vec<_> = selection.iter().cloned().collect();
-        if keys.is_empty() {
-            return Err("regenerate: empty selection".into());
-        }
-        keys.sort();
-
-        let d = keys.len();
-
-        let mut mean = DVector::zeros(d);
-        for (i, k) in keys.iter().enumerate() {
-            mean[i] = trace.get_choice(k).value.expect_float();
-        }
-
-        let mut sigma = DMatrix::<f64>::zeros(d, d);
-
-        for (i, k) in keys.iter().enumerate() {
-            sigma[(i, i)] = self.scales.get(k).copied().unwrap_or(1.0).powi(2);
-        }
-        for i in 0..d {
-            for j in (i + 1)..d {
-                let key = format!("{},{}", keys[i], keys[j]);
-                if let Some(&v) = self.scales.get(&key) {
-                    sigma[(i, j)] = v;
-                    sigma[(j, i)] = v;
-                }
-            }
-        }
-
-        /* Cholesky factor L (Σ = L Lᵀ) */
-        let l = Cholesky::new(sigma)
-            .ok_or("regenerate: covariance not positive-definite")?
-            .l();
-
-        let normal = statrs::distribution::Normal::new(0.0, 1.0).unwrap();
-
-        let delta: DVector<f64> = {
-            let mut rng = self.rand();
-            let eps = DVector::from_fn(d, |_, _| normal.sample(&mut *rng));
-            &l * eps
-        };
-
-        let proposals = keys
-            .iter()
-            .enumerate()
-            .map(|(i, k)| (k.clone(), mean[i] + delta[i]))
-            .collect::<HashMap<_, _>>();
-
-        let (new_trace, _) = self.generate(args.clone(), proposals)?;
-        let weight = new_trace.get_score() - old_score;
-
-        Ok((new_trace, weight))
-    }
-
-    pub fn propose(
-        &self,
-        args: Vec<Value>,
-    ) -> Result<(ChoiceMap<String, Value>, f64, Value), String> {
-        let trace = self.simulate(args)?;
-        let weight = trace.get_score();
-        Ok((trace.get_choices(), weight, trace.get_retval().clone()))
-    }
-}
-
-pub fn mh(
-    program: &GenerativeFunction,
-    trace: Trace<GenerativeFunction, String, Value>,
-    selection: &HashSet<String>,
-) -> Result<(Trace<GenerativeFunction, String, Value>, bool), String> {
-    let (updated, weight) = program.regenerate(trace.clone(), selection)?;
-    let mut rng = program.rand();
-
-    // Acceptance check
-    if rng.gen::<f64>().ln() < weight {
-        Ok((updated, true))
-    } else {
-        Ok((trace, false))
-    }
 }
