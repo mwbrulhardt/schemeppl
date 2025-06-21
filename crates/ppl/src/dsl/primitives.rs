@@ -1,12 +1,11 @@
-use crate::ast::{Procedure, Value};
 use rand::RngCore;
 
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::ast::HostFn;
 use crate::distributions::{Condition, DistributionExtended, Mixture};
+use crate::dsl::ast::{HostFn, Procedure, Value};
 
 /// Make a gensym.
 pub fn make_gensym(args: Vec<Value>) -> Result<Value, String> {

@@ -230,7 +230,7 @@ impl From<Literal> for Value {
 
 impl TryFrom<Value> for Literal {
     type Error = String;
-    
+
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::Boolean(b) => Ok(Literal::Boolean(b)),

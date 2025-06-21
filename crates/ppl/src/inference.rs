@@ -3,41 +3,39 @@
 //! This module provides a flexible kernel-based system for MCMC inference,
 //! similar to Gen.jl's kernel composition approach.
 
+use crate::address::Selection;
+use crate::choice_map::{ChoiceMap, ChoiceMapQuery};
+use crate::gfi::{self, ArgDiff};
 use rand::{rngs::StdRng, Rng};
 use std::sync::{Arc, Mutex};
 
-use crate::ast::{Value, Literal};
-use crate::core::gfi::{self, ArgDiff};
-use crate::core::address::{Selection, ChoiceMap};
-
-
 /// Check that observed choices in the new trace match the expected observations
-fn check_observations(
-    _choices: &ChoiceMap<Literal>,
-    _observations: &ChoiceMap<Literal>,
-) -> Result<(), String> {
+fn check_observations<V, C: ChoiceMap<V>>(_choices: &C, _observations: &C) -> Result<(), String> {
     // For now, skip detailed checking since this is just a placeholder
     // In a full implementation, this would check that all observed values match
     Ok(())
 }
 
 /// Generic Metropolis-Hastings update using ancestral sampling (regenerate)
-pub fn metropolis_hastings<T>(
+pub fn metropolis_hastings<R, V, T, A, E>(
     rng: Arc<Mutex<StdRng>>,
     trace: T,
     selection: Selection,
     check: Option<bool>,
-    observations: Option<ChoiceMap<Literal>>,
+    observations: Option<T::ChoiceMap>,
 ) -> Result<(T, bool), String>
 where
-    T: gfi::Trace<Literal, Args = Vec<Value>, RetVal = Value> + Clone,
+    R: Clone + std::fmt::Debug + 'static,
+    V: Clone + std::fmt::Debug + 'static,
+    A: Clone + std::fmt::Debug + AsRef<[E]> + 'static,
+    T: gfi::Trace<R, V, Args = A> + Clone,
 {
     let check = check.unwrap_or(false);
-    let empty_observations = ChoiceMap::Empty;
+    let empty_observations = T::ChoiceMap::empty();
     let observations = observations.unwrap_or(empty_observations);
 
     let model_args = trace.get_args().clone();
-    let argdiffs = vec![ArgDiff::NoChange; model_args.len()];
+    let argdiffs = vec![ArgDiff::NoChange; model_args.as_ref().len()];
 
     let (new_trace, weight, _) = trace
         .regenerate(rng.clone(), model_args, argdiffs, selection)
@@ -62,20 +60,24 @@ where
 }
 
 /// Generic MH with custom proposal generative function
-pub fn metropolis_hastings_with_proposal<T, G>(
+pub fn metropolis_hastings_with_proposal<R, V, T, G, A, E>(
     rng: Arc<Mutex<StdRng>>,
     trace: T,
     proposal: &G,
-    proposal_args: Vec<Value>,
+    proposal_args: A,
     check: bool,
-    observations: Option<ChoiceMap<Literal>>,
+    observations: Option<T::ChoiceMap>,
 ) -> Result<(T, bool), String>
 where
-    T: gfi::Trace<Literal, Args = Vec<Value>, RetVal = Value> + Clone,
-    G: gfi::GenerativeFunction<Literal, Args = Vec<Value>, RetVal = Value, TraceType = T>,
+    R: Clone + std::fmt::Debug + 'static,
+    V: Clone + std::fmt::Debug + 'static,
+    A: Clone + std::fmt::Debug + AsRef<[E]> + 'static,
+    T: gfi::Trace<R, V, Args = A> + Clone,
+    G: gfi::GenerativeFunction<R, V, Args = A, TraceType = T>,
+    T::ChoiceMap: ChoiceMapQuery<V>,
 {
     let model_args = trace.get_args().clone();
-    let argdiffs = vec![ArgDiff::NoChange; model_args.len()];
+    let argdiffs = vec![ArgDiff::NoChange; model_args.as_ref().len()];
 
     // Forward proposal
     let (fwd_choices, fwd_weight, _) = proposal
@@ -99,13 +101,15 @@ where
             check_observations(&new_choices, obs)?;
         }
     }
-    
+
     // Metropolis-Hastings acceptance criterion
     // Accept with probability exp(log_alpha)
     let mut rng_guard = rng.lock().unwrap();
     let u: f64 = rng_guard.gen();
-    
-    if u < alpha.exp() {
+
+    let accept = u < alpha.exp();
+
+    if accept {
         Ok((new_trace, true))
     } else {
         Ok((trace.clone(), false))
@@ -115,17 +119,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::address::Address;
+    use crate::dsl::ast::{Literal, Value};
+    use crate::gfi::{GenerativeFunction, Trace};
     use crate::r#gen;
     use crate::utils::compute_mean_and_variance;
     use rand::distributions::Bernoulli;
+    use rand::distributions::Distribution;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
     use statrs::distribution::Normal as RandNormal;
     use std::sync::{Arc, Mutex};
-    use crate::core::gfi::{GenerativeFunction, Trace};
-    use rand::distributions::Distribution;
-    use crate::core::address::Address;
-
 
     #[test]
     fn test_gmm_with_dsl_proposal() {
@@ -134,25 +138,26 @@ mod tests {
         const DRAW: usize = 1000;
         const STEP_SIZE: f64 = 0.15;
 
-        let data_seed = 40;
-        let mut rng = StdRng::seed_from_u64(data_seed);
+        let rng = Arc::new(Mutex::new(StdRng::seed_from_u64(SEED)));
 
-        let num_samples = 100;
+        let num_samples = 200;
         let mu1 = -2.0;
         let mu2 = 2.0;
         let sigma = 1.0;
         let p = 0.5;
         let z_dist = Bernoulli::new(p).unwrap();
-        let z: Vec<bool> = (0..num_samples).map(|_| z_dist.sample(&mut rng)).collect();
+        let z: Vec<bool> = (0..num_samples)
+            .map(|_| z_dist.sample(&mut *rng.lock().unwrap()))
+            .collect();
 
         let component1 = RandNormal::new(mu1, sigma).unwrap();
         let c1: Vec<f64> = (0..num_samples)
-            .map(|_| component1.sample(&mut rng))
+            .map(|_| component1.sample(&mut *rng.lock().unwrap()))
             .collect();
 
         let component2 = RandNormal::new(mu2, sigma).unwrap();
         let c2: Vec<f64> = (0..num_samples)
-            .map(|_| component2.sample(&mut rng))
+            .map(|_| component2.sample(&mut *rng.lock().unwrap()))
             .collect();
 
         let data = Value::List(
@@ -186,7 +191,7 @@ mod tests {
             // Propose new values using normal distributions centered at current values
             (sample mu1 (normal current_mu1 step_size))
             (sample mu2 (normal current_mu2 step_size))
-            
+
             // Return a dummy value (proposals are about the choices, not the return value)
             #t
         });
@@ -194,29 +199,39 @@ mod tests {
         let mu1_name = "mu1".to_string();
         let mu2_name = "mu2".to_string();
 
-
         let program = model;
         let proposal_fn = proposal;
         let inference_rng = Arc::new(Mutex::new(StdRng::seed_from_u64(SEED)));
 
-        let mut trace = program.simulate(inference_rng.clone(), vec![data]);
-        
+        let mut trace = program.simulate(inference_rng.clone(), vec![data.clone()]);
+        let mut attempts = 0;
+
+        while !trace.get_score().is_finite() && attempts < 1000 {
+            trace = program.simulate(inference_rng.clone(), vec![data.clone()]);
+            attempts += 1;
+        }
+
+        if !trace.get_score().is_finite() {
+            panic!(
+                "Unable to initialise Markov chain: failed to obtain finite posterior score after {} attempts. Check whether the chosen parameters (e.g. very tight σ or extreme μ) are compatible with the prior.",
+                attempts
+            );
+        }
+
         // Burn-in
         for _ in 0..BURN_IN {
             // Get current values to pass to proposal
-            let current_mu1 = trace.get_value(&Address::Symbol(mu1_name.clone()))
-                .map(|literal| literal_to_value(&literal))
+            let current_mu1 = trace
+                .get_value(&Address::Symbol(mu1_name.clone()))
+                .map(|record| record_to_value(&record))
                 .unwrap_or(Value::Float(0.0));
-            let current_mu2 = trace.get_value(&Address::Symbol(mu2_name.clone()))
-                .map(|literal| literal_to_value(&literal))
+            let current_mu2 = trace
+                .get_value(&Address::Symbol(mu2_name.clone()))
+                .map(|record| record_to_value(&record))
                 .unwrap_or(Value::Float(0.0));
-            
-            let proposal_args = vec![
-                current_mu1,
-                current_mu2,
-                Value::Float(STEP_SIZE)
-            ];
-            
+
+            let proposal_args = vec![current_mu1, current_mu2, Value::Float(STEP_SIZE)];
+
             let (new_trace, _accepted) = metropolis_hastings_with_proposal(
                 inference_rng.clone(),
                 trace,
@@ -224,7 +239,8 @@ mod tests {
                 proposal_args,
                 false,
                 None,
-            ).unwrap();
+            )
+            .unwrap();
             trace = new_trace;
         }
 
@@ -234,19 +250,21 @@ mod tests {
         // Sampling
         for _ in 0..DRAW {
             // Get current values to pass to proposal
-            let current_mu1 = trace.get_value(&Address::Symbol(mu1_name.clone()))
-                .map(|literal| literal_to_value(&literal))
+            let current_mu1 = trace
+                .get_value(&Address::Symbol(mu1_name.clone()))
+                .map(|record| record_to_value(&record))
                 .unwrap_or(Value::Float(0.0));
-            let current_mu2 = trace.get_value(&Address::Symbol(mu2_name.clone()))
-                .map(|literal| literal_to_value(&literal))
+            let current_mu2 = trace
+                .get_value(&Address::Symbol(mu2_name.clone()))
+                .map(|record| record_to_value(&record))
                 .unwrap_or(Value::Float(0.0));
-            
+
             let proposal_args = vec![
-                current_mu1,
-                current_mu2,
-                Value::Float(STEP_SIZE)
+                current_mu1.clone(),
+                current_mu2.clone(),
+                Value::Float(STEP_SIZE),
             ];
-            
+
             let (new_trace, accepted) = metropolis_hastings_with_proposal(
                 inference_rng.clone(),
                 trace,
@@ -254,13 +272,15 @@ mod tests {
                 proposal_args,
                 false,
                 None,
-            ).unwrap();
+            )
+            .unwrap();
+            history.push(new_trace.clone());
+
             trace = new_trace;
-            
+
             if accepted {
                 num_accepted += 1;
             }
-            history.push(trace.clone());
         }
 
         let (mean_mu1, variance_mu1) = compute_mean_and_variance(&history, &mu1_name);
@@ -283,7 +303,15 @@ mod tests {
         assert!(variance_mu2 > 0.0 && variance_mu2 < 2.5);
     }
 
-    // The trace get_value method now returns Literal instead of Value
+    // Helper to convert Record to Value
+    fn record_to_value(record: &crate::dsl::trace::Record) -> Value {
+        match record {
+            crate::dsl::trace::Record::Choice(literal, _) => literal_to_value(literal),
+            crate::dsl::trace::Record::Call(_, _) => Value::String("call".to_string()),
+        }
+    }
+
+    // The trace get_value method now returns a choice value instead of Value
     // So we need to convert to Value and extract the expected type
     fn literal_to_value(literal: &Literal) -> Value {
         match literal {
@@ -294,5 +322,3 @@ mod tests {
         }
     }
 }
-
-

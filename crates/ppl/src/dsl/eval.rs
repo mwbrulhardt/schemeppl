@@ -2,12 +2,44 @@ use rand::RngCore;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::ast::{Env, Expression, HostFn, Literal, Procedure, Value};
-use crate::primitives::create_distribution;
-use crate::primitives::*;
+use crate::address::Address;
+use crate::dsl::ast::{Env, Expression, HostFn, Literal, Procedure, Value};
+use crate::dsl::primitives::*;
 use crate::dsl::trace::SchemeDSLTrace;
-use crate::core::address::Address;
-use crate::core::gfi::Trace;
+use crate::gfi::Trace;
+
+/// Helper function to evaluate a distribution and either sample from it or score a value
+/// This centralizes the common pattern of distribution evaluation used in Sample and Observe expressions
+pub fn eval_distribution(
+    distribution_value: Value,
+    value: Option<&Value>, // None = sample, Some(value) = score
+    rng: &mut dyn RngCore,
+) -> Result<(Value, f64), String> {
+    match distribution_value {
+        Value::Procedure(Procedure::Stochastic {
+            name: dist_name,
+            args,
+        }) => {
+            let args = args.unwrap_or_default();
+            let dist = create_distribution(&dist_name, &args)?;
+
+            match value {
+                None => {
+                    // Sample mode
+                    let sampled_value = dist.sample(rng);
+                    let score = dist.log_prob(&sampled_value)?;
+                    Ok((sampled_value, score))
+                }
+                Some(val) => {
+                    // Score mode
+                    let score = dist.log_prob(val)?;
+                    Ok((val.clone(), score))
+                }
+            }
+        }
+        _ => Err("Distribution expression must yield a distribution".to_string()),
+    }
+}
 
 /// Evaluates an expression against an environment, using the specified trace and random number generator.
 /// The function is a monadic recursive evaluator, updating the trace with stochastic choices made during evaluation.
@@ -83,7 +115,7 @@ pub fn eval(
         Expression::Quote(expr) => Ok(Value::Expr(*expr)),
 
         Expression::Sample { distribution, name } => {
-            // Evaluate the expressions
+            // Evaluate the name and distribution expressions
             let name = eval(*name, env.clone(), trace, rng)?;
             let dist = eval(*distribution, env.clone(), trace, rng)?;
 
@@ -96,23 +128,12 @@ pub fn eval(
                 other => format!("{:?}", other),
             };
 
-            // Get the stochastic procedure and sample from it
-            match dist {
-                Value::Procedure(Procedure::Stochastic {
-                    name: dist_name,
-                    args,
-                }) => {
-                    let args = args.unwrap_or_default();
-                    let dist = create_distribution(&dist_name, &args)?;
-                    let value = dist.sample(rng);
-                    let score = dist.log_prob(&value)?;
+            // Use the helper function to sample from the distribution
+            let (value, score) = eval_distribution(dist, None, rng)?;
 
-                    // Add to trace
-                    let _ = trace.add_choice(Address::Symbol(addr), value.clone(), score);
-                    Ok(value)
-                }
-                _ => Err("Sample distribution must yield a distribution".to_string()),
-            }
+            // Add to trace
+            let _ = trace.add_choice(Address::Symbol(addr), value.clone(), score);
+            Ok(value)
         }
 
         Expression::Observe {
@@ -133,18 +154,8 @@ pub fn eval(
                 other => format!("{:?}", other),
             };
 
-            // Get the stochastic procedure and compute score
-            let score = match dist {
-                Value::Procedure(Procedure::Stochastic {
-                    name: dist_name,
-                    args,
-                }) => {
-                    let args = args.unwrap_or_default();
-                    let dist = create_distribution(&dist_name, &args)?;
-                    dist.log_prob(&value)?
-                }
-                _ => return Err("Observe distribution must yield a distribution".to_string()),
-            };
+            // Use the helper function to score the observed value
+            let (_, score) = eval_distribution(dist, Some(&value), rng)?;
 
             // Add to trace and return the observed value
             let _ = trace.add_choice(Address::Symbol(addr), value.clone(), score);

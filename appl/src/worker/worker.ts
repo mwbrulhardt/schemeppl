@@ -3,15 +3,22 @@ import {
   generate_data,
   JsGenerativeFunction,
   JsTrace,
-  metropolis_hastings,
+  JsRng,
+  metropolis_hastings_with_proposal_js,
 } from '../pkg/wasm';
 
 import { Parameters } from '@/types/simulation';
 
 /* ------------------------------------------------------------------ */
 let algorithm: JsGenerativeFunction | null = null;
+let proposalFunction: JsGenerativeFunction | null = null;
 let trace: JsTrace | null = null;
+let rng: JsRng | null = null;
 let datasetCache: { data: Float64Array; labels: Uint8Array } | null = null;
+
+// Store proposal step sizes globally
+let proposalStepSize1 = 0.15;
+let proposalStepSize2 = 0.15;
 
 /* -------------------- streaming control ------------------------------ */
 let running = false;
@@ -48,7 +55,7 @@ function ensureInitialized(params: Parameters) {
 }
 
 function pushBatch() {
-  if (!running || !algorithm || !trace) return;
+  if (!running || !algorithm || !trace || !rng || !proposalFunction) return;
 
   const steps: Array<{ mu1: number; mu2: number; accepted: boolean }> = [];
   let numAccepted = 0;
@@ -57,17 +64,13 @@ function pushBatch() {
   const count = Math.min(batchSize, iterationsLeft);
 
   for (let i = 0; i < count; i++) {
-    const [nextTrace, accepted] = metropolis_hastings(algorithm!, trace!, [
-      'mu1',
-      'mu2',
-    ]);
-    trace = nextTrace;
+    const stepResult = step();
     steps.push({
-      mu1: nextTrace.get_choice('mu1'),
-      mu2: nextTrace.get_choice('mu2'),
-      accepted,
+      mu1: stepResult.mu1,
+      mu2: stepResult.mu2,
+      accepted: stepResult.accepted,
     });
-    if (accepted) numAccepted++;
+    if (stepResult.accepted) numAccepted++;
     iterationsDone++;
   }
 
@@ -104,7 +107,22 @@ function buildModel(p: Parameters) {
   )`;
 }
 
+function buildProposal() {
+  return `(
+    (sample mu1 (normal current_mu1 step_size1))
+    (sample mu2 (normal current_mu2 step_size2))
+    #t
+  )`;
+}
+
 function initialize(params: Parameters) {
+  // Initialize RNG
+  rng = new JsRng(BigInt(params.seed));
+
+  // Store proposal step sizes
+  proposalStepSize1 = params.proposalStdDev1;
+  proposalStepSize2 = params.proposalStdDev2;
+
   // Generate dataset & cache
   const generated = generate_data(
     params.mu1,
@@ -113,7 +131,7 @@ function initialize(params: Parameters) {
     params.sigma2,
     params.p,
     params.sampleSize,
-    BigInt(params.seed)
+    rng
   );
 
   datasetCache = {
@@ -122,19 +140,23 @@ function initialize(params: Parameters) {
   };
 
   const model = buildModel(params);
+  const proposal = buildProposal();
 
-  algorithm = new JsGenerativeFunction(
-    model,
-    { mu1: params.proposalStdDev1, mu2: params.proposalStdDev2 },
-    BigInt(params.seed)
+  // Create the main generative function
+  algorithm = new JsGenerativeFunction(['data'], model);
+
+  // Create the proposal function
+  proposalFunction = new JsGenerativeFunction(
+    ['current_mu1', 'current_mu2', 'step_size1', 'step_size2'],
+    proposal
   );
 
   let data = new Float64Array(datasetCache.data);
 
-  let tr = algorithm.simulate(data);
+  let tr = algorithm.simulate(rng, data);
   let attempts = 0;
   while (!Number.isFinite(tr.score()) && attempts < 1000) {
-    tr = algorithm.simulate(data);
+    tr = algorithm.simulate(rng, data);
     attempts++;
   }
 
@@ -159,12 +181,36 @@ function initialize(params: Parameters) {
 }
 
 function step() {
-  if (!algorithm || !trace) throw new Error('Simulation not initialised');
-  const [nextTrace, accepted] = metropolis_hastings(algorithm, trace, [
-    'mu1',
-    'mu2',
-  ]);
+  if (!algorithm || !trace || !rng || !proposalFunction)
+    throw new Error('Simulation not initialised');
+
+  // Get current values from the trace
+  const currentMu1 = trace.get_choice('mu1');
+  const currentMu2 = trace.get_choice('mu2');
+
+  // Use stored step sizes
+  const stepSize1 = proposalStepSize1;
+  const stepSize2 = proposalStepSize2;
+
+  // Create proposal arguments
+  const proposalArgs = [currentMu1, currentMu2, stepSize1, stepSize2];
+  const proposalArgsArray = new Array(proposalArgs.length);
+  for (let i = 0; i < proposalArgs.length; i++) {
+    proposalArgsArray[i] = proposalArgs[i];
+  }
+
+  const result = metropolis_hastings_with_proposal_js(
+    rng,
+    trace,
+    proposalFunction,
+    proposalArgsArray,
+    false, // check
+    null // observations
+  );
+
+  const [nextTrace, accepted] = result;
   trace = nextTrace;
+
   return {
     mu1: nextTrace.get_choice('mu1'),
     mu2: nextTrace.get_choice('mu2'),
@@ -178,6 +224,8 @@ self.onmessage = (event) => {
     let result;
     switch (op) {
       case 'generate_data': {
+        // Create a temporary RNG for this operation
+        const tempRng = new JsRng(BigInt(args.seed));
         result = generate_data(
           args.mu1,
           args.sigma1,
@@ -185,7 +233,7 @@ self.onmessage = (event) => {
           args.sigma2,
           args.p,
           args.n,
-          BigInt(args.seed)
+          tempRng
         );
         result = {
           data: Array.from(result.data),

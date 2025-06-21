@@ -178,3 +178,7 @@ classDiagram
 - [Church](https://cocolab.stanford.edu/papers/GoodmanEtAl2008-UncertaintyInArtificialIntelligence.pdf)
 - [Venture](https://arxiv.org/abs/1404.0099)
 - [Anglican](https://arxiv.org/abs/1608.05263)
+- **Gen**
+  - [Gen Paper](https://dl.acm.org/doi/pdf/10.1145/3314221.3314642)
+  - [Gen.jl](https://github.com/probcomp/Gen.jl)
+  - [GenJax](https://github.com/genjax-community/genjax)

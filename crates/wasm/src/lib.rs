@@ -1,19 +1,95 @@
 use js_sys::Float64Array;
 use wasm_bindgen::prelude::*;
 
-use ppl::{mh, metropolis_hastings as mh_with_check, parse_string, GenerativeFunction, Trace, Value, ChoiceMap, ChoiceOrCallRecord};
-
+// Updated imports to use the new API structure
+use ppl::address::{Address, Selection};
+use ppl::choice_map::ChoiceMap;
 use ppl::distributions::DistributionExtended;
+use ppl::dsl::ast::Value;
+use ppl::dsl::parser::parse_string;
+use ppl::dsl::trace::{Record, SchemeDSLTrace, SchemeGenerativeFunction};
+use ppl::gfi::{GenerativeFunction, Trace};
+use ppl::inference::{metropolis_hastings, metropolis_hastings_with_proposal};
 
-use js_sys::{Object, Reflect};
+//use js_sys::{Object, Reflect};
 use rand::{rngs::StdRng, SeedableRng};
 use statrs::distribution::{Bernoulli, Normal};
-use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
+
+/// Custom error type for better JavaScript error handling
+#[wasm_bindgen]
+pub struct PplError {
+    message: String,
+}
+
+#[wasm_bindgen]
+impl PplError {
+    #[wasm_bindgen(getter)]
+    pub fn message(&self) -> String {
+        self.message.clone()
+    }
+}
+
+impl From<String> for PplError {
+    fn from(message: String) -> Self {
+        Self { message }
+    }
+}
+
+// Utility functions for better type conversion
+fn js_value_to_value(js_val: &JsValue) -> Value {
+    if let Some(num) = js_val.as_f64() {
+        Value::Float(num)
+    } else if let Some(s) = js_val.as_string() {
+        Value::String(s)
+    } else if let Some(b) = js_val.as_bool() {
+        Value::Boolean(b)
+    } else if js_val.is_null() || js_val.is_undefined() {
+        Value::List(vec![]) // Use empty list for null/undefined
+    } else {
+        // Try to handle arrays
+        if let Some(array) = js_val.dyn_ref::<js_sys::Array>() {
+            let values: Vec<Value> = (0..array.length())
+                .map(|i| js_value_to_value(&array.get(i)))
+                .collect();
+            Value::List(values)
+        } else {
+            Value::Float(0.0) // Default fallback
+        }
+    }
+}
 
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = console)]
     fn log(s: &str);
+}
+
+/// JavaScript-accessible RNG wrapper
+#[wasm_bindgen]
+pub struct JsRng {
+    inner: Arc<Mutex<StdRng>>,
+}
+
+#[wasm_bindgen]
+impl JsRng {
+    #[wasm_bindgen(constructor)]
+    pub fn new(seed: u64) -> JsRng {
+        JsRng {
+            inner: Arc::new(Mutex::new(StdRng::seed_from_u64(seed))),
+        }
+    }
+
+    /// Re-seed the RNG with a new seed
+    pub fn reseed(&self, seed: u64) {
+        *self.inner.lock().unwrap() = StdRng::seed_from_u64(seed);
+    }
+
+    /// Generate a random f64 for testing purposes
+    pub fn random(&self) -> f64 {
+        use rand::Rng;
+        self.inner.lock().unwrap().gen()
+    }
 }
 
 #[wasm_bindgen]
@@ -24,18 +100,18 @@ pub fn generate_data(
     sigma2: f64,
     p: f64,
     n: usize,
-    seed: u64,
+    rng: &JsRng,
 ) -> JsValue {
-    let mut rng = StdRng::seed_from_u64(seed);
+    let mut rng = rng.inner.lock().unwrap();
 
     let z_dist = Bernoulli::new(p).unwrap();
-    let z: Vec<bool> = (0..n).map(|_| z_dist.sample_dyn(&mut rng)).collect();
+    let z: Vec<bool> = (0..n).map(|_| z_dist.sample_dyn(&mut *rng)).collect();
 
     let component1 = Normal::new(mu1, sigma1).unwrap();
-    let c1: Vec<f64> = (0..n).map(|_| component1.sample_dyn(&mut rng)).collect();
+    let c1: Vec<f64> = (0..n).map(|_| component1.sample_dyn(&mut *rng)).collect();
 
     let component2 = Normal::new(mu2, sigma2).unwrap();
-    let c2: Vec<f64> = (0..n).map(|_| component2.sample_dyn(&mut rng)).collect();
+    let c2: Vec<f64> = (0..n).map(|_| component2.sample_dyn(&mut *rng)).collect();
 
     let data: Vec<f64> = (0..n).map(|i| if z[i] { c1[i] } else { c2[i] }).collect();
 
@@ -62,92 +138,140 @@ pub fn generate_data(
 
 #[wasm_bindgen]
 pub struct JsGenerativeFunction {
-    inner: GenerativeFunction,
+    inner: SchemeGenerativeFunction,
 }
 
 #[wasm_bindgen]
 impl JsGenerativeFunction {
     #[wasm_bindgen(constructor)]
-    pub fn new(src: String, _scales: &Object, seed: u64) -> JsGenerativeFunction {
+    pub fn new(param_names: Vec<String>, src: String) -> JsGenerativeFunction {
+        // Parse the source code to get expressions
         let exprs = parse_string(&src);
 
-        // Note: scales parameter is ignored since custom proposal logic was removed
-        let gf = GenerativeFunction::new(exprs, vec!["data".into()], seed);
+        // Create the generative function with the data argument
+        let gf = SchemeGenerativeFunction::new(exprs, param_names);
 
         JsGenerativeFunction { inner: gf }
     }
 
-    pub fn simulate(&self, data: &Float64Array) -> Result<JsTrace, JsValue> {
-        let wrapped = Value::List(
-            data.to_vec()
-                .into_iter()
-                .map(Value::Float)
-                .collect::<Vec<_>>(),
-        );
+    /// Execute the generative function and return a trace
+    pub fn simulate(&self, rng: &JsRng, args: &JsValue) -> Result<JsTrace, PplError> {
+        let rust_args = if let Some(array) = args.dyn_ref::<Float64Array>() {
+            vec![Value::List(
+                array
+                    .to_vec()
+                    .into_iter()
+                    .map(Value::Float)
+                    .collect::<Vec<_>>(),
+            )]
+        } else {
+            vec![js_value_to_value(args)]
+        };
 
-        self.inner
-            .simulate(vec![wrapped])
-            .map(|tr| JsTrace { inner: tr })
-            .map_err(|e| JsValue::from_str(&e))
-    }
-
-    #[wasm_bindgen]
-    pub fn regenerate(
-        &self,
-        current: &JsTrace,
-        selection: &js_sys::Array,
-    ) -> Result<js_sys::Array, JsValue> {
-        // convert JS array → HashSet<String>
-        let sel: HashSet<String> = selection.iter().filter_map(|v| v.as_string()).collect();
-
-        // call your Rust logic
-        let (prop_trace, log_w) = self
-            .inner
-            .regenerate(current.inner.clone(), &sel)
-            .map_err(|e| JsValue::from_str(&e))?;
-
-        // pack result back for JS
-        let out = js_sys::Array::new();
-        out.push(&JsTrace { inner: prop_trace }.into());
-        out.push(&JsValue::from_f64(log_w));
-        Ok(out)
+        let trace = self.inner.simulate(rng.inner.clone(), rust_args);
+        Ok(JsTrace { inner: trace })
     }
 }
 
 #[wasm_bindgen]
 #[derive(Debug)]
 pub struct JsTrace {
-    inner: Trace<GenerativeFunction, String, Value>,
+    inner: SchemeDSLTrace,
 }
 
 #[wasm_bindgen]
 impl JsTrace {
     /// Get the numeric value of a choice.
     pub fn get_choice(&self, name: &str) -> f64 {
-        self.inner
-            .get_choice(&name.to_string())
-            .value
-            .expect_float()
+        let addr = Address::Symbol(name.to_string());
+        if let Some(record) = self.inner.get_value(&addr) {
+            match record {
+                Record::Choice(literal, _) => match literal {
+                    ppl::dsl::ast::Literal::Float(f) => f,
+                    ppl::dsl::ast::Literal::Integer(i) => i as f64,
+                    _ => 0.0,
+                },
+                _ => 0.0,
+            }
+        } else {
+            0.0
+        }
     }
 
     /// Get the whole choice list as an object `{name: number, …}`.
     pub fn choices(&self) -> JsValue {
         let obj = js_sys::Object::new();
-        for (k, v) in self.inner.get_choices().choices.iter() {
-            js_sys::Reflect::set(
-                &obj,
-                &JsValue::from_str(k),
-                &JsValue::from_f64(v.subtrace_or_retval.expect_float()),
-            )
-            .unwrap();
+        let choices = self.inner.get_choices();
+        for (addr, record) in choices.iter() {
+            let key = match &addr {
+                Address::Symbol(s) => s.clone(),
+                Address::Path(path) => format!("{:?}", path),
+                Address::Index(_) => format!("index_{:?}", addr),
+                Address::Wildcard => "wildcard".to_string(),
+            };
+
+            let value = match record {
+                Record::Choice(literal, _) => match literal {
+                    ppl::dsl::ast::Literal::Float(f) => *f,
+                    ppl::dsl::ast::Literal::Integer(i) => *i as f64,
+                    ppl::dsl::ast::Literal::Boolean(b) => {
+                        if *b {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    _ => 0.0,
+                },
+                _ => 0.0,
+            };
+
+            js_sys::Reflect::set(&obj, &JsValue::from_str(&key), &JsValue::from_f64(value))
+                .unwrap();
         }
         obj.into()
     }
 
-    /// Get the data used in the trace.
+    /// Get the arguments used in the trace
+    pub fn get_args(&self) -> JsValue {
+        let args = self.inner.get_args();
+        if let Some(Value::List(data)) = args.get(0) {
+            let values: Vec<f64> = data
+                .iter()
+                .map(|v| match v {
+                    Value::Float(f) => *f,
+                    Value::Integer(i) => *i as f64,
+                    _ => 0.0,
+                })
+                .collect();
+            Float64Array::from(&values[..]).into()
+        } else {
+            Float64Array::new_with_length(0).into()
+        }
+    }
+
+    /// Get the return value of the trace
+    pub fn get_retval(&self) -> JsValue {
+        match self.inner.get_retval() {
+            Value::Float(f) => JsValue::from_f64(*f),
+            Value::Integer(i) => JsValue::from_f64(*i as f64),
+            Value::Boolean(b) => JsValue::from_bool(*b),
+            Value::String(s) => JsValue::from_str(s),
+            _ => JsValue::NULL,
+        }
+    }
+
+    /// Get the data used in the trace (alias for get_args for backward compatibility)
     pub fn get_data(&self) -> Float64Array {
-        if let Value::List(data) = &self.inner.get_args()[0] {
-            let values: Vec<f64> = data.iter().map(|v| v.expect_float()).collect();
+        if let Some(Value::List(data)) = self.inner.get_args().get(0) {
+            let values: Vec<f64> = data
+                .iter()
+                .map(|v| match v {
+                    Value::Float(f) => *f,
+                    Value::Integer(i) => *i as f64,
+                    _ => 0.0,
+                })
+                .collect();
             Float64Array::from(&values[..])
         } else {
             Float64Array::new_with_length(0)
@@ -156,19 +280,39 @@ impl JsTrace {
 
     /// Un-normalised log-probability of the trace (handy for diagnostics).
     pub fn score(&self) -> f64 {
-        self.inner.score
+        self.inner.get_score()
     }
 }
 
+/// Metropolis-Hastings with the same signature as the inference module
 #[wasm_bindgen]
-pub fn metropolis_hastings_simple(
-    program: &JsGenerativeFunction,
+pub fn metropolis_hastings_js(
+    rng: &JsRng,
     trace: &JsTrace,
     selection: &js_sys::Array,
+    check: Option<bool>,
+    observations: Option<JsTrace>,
 ) -> Result<js_sys::Array, JsValue> {
-    let sel: HashSet<String> = selection.iter().filter_map(|v| v.as_string()).collect();
-    let (next, accepted) = mh(&program.inner, trace.inner.clone(), &sel)
-        .map_err(|e| JsValue::from_str(&e))?;
+    let sel_strings: Vec<String> = selection.iter().filter_map(|v| v.as_string()).collect();
+
+    // For now, use Selection::All if we have selections
+    let selection = if sel_strings.is_empty() {
+        Selection::All
+    } else {
+        Selection::All // Simplified for now
+    };
+
+    // Convert observations if provided
+    let observations = observations.map(|obs| obs.inner.get_choices());
+
+    let (next, accepted) = metropolis_hastings(
+        rng.inner.clone(),
+        trace.inner.clone(),
+        selection,
+        check,
+        observations,
+    )
+    .map_err(|e| JsValue::from_str(&e))?;
 
     let result = js_sys::Array::new();
     result.push(&JsTrace { inner: next }.into());
@@ -176,57 +320,42 @@ pub fn metropolis_hastings_simple(
     Ok(result)
 }
 
-/// Backward compatible alias for metropolis_hastings_simple
+/// Metropolis-Hastings with custom proposal function
 #[wasm_bindgen]
-pub fn metropolis_hastings(
-    program: &JsGenerativeFunction,
+pub fn metropolis_hastings_with_proposal_js(
+    rng: &JsRng,
     trace: &JsTrace,
-    selection: &js_sys::Array,
-) -> Result<js_sys::Array, JsValue> {
-    metropolis_hastings_simple(program, trace, selection)
-}
-
-#[wasm_bindgen]
-pub fn metropolis_hastings_with_check(
-    program: &JsGenerativeFunction,
-    trace: &JsTrace,
-    selection: &js_sys::Array,
+    proposal: &JsGenerativeFunction,
+    proposal_args: &js_sys::Array,
     check: bool,
-    observations: &Object,
+    observations: Option<JsTrace>,
 ) -> Result<js_sys::Array, JsValue> {
-    let sel: HashSet<String> = selection.iter().filter_map(|v| v.as_string()).collect();
-    
-    // Convert observations Object to ChoiceMap
-    let obs_map = if check {
-        let mut choices = HashMap::new();
-        let keys = js_sys::Object::keys(observations);
-        for i in 0..keys.length() {
-            let key = keys.get(i);
-            let key_str = key.as_string().unwrap();
-            let value = Reflect::get(observations, &key).unwrap();
-            let value_f64 = value.as_f64().unwrap();
-            
-            // Create a choice record for the observation
-            choices.insert(
-                key_str,
-                ChoiceOrCallRecord {
-                    subtrace_or_retval: Value::Float(value_f64),
-                    score: 0.0,
-                    noise: f64::NAN,
-                    is_choice: true,
-                },
-            );
-        }
-        ChoiceMap::new(choices)
-    } else {
-        ChoiceMap::new(HashMap::new())
-    };
+    // Convert JS array to Vec<Value>
+    let proposal_args: Vec<Value> = proposal_args
+        .iter()
+        .map(|js_val| {
+            if let Some(num) = js_val.as_f64() {
+                Value::Float(num)
+            } else if let Some(s) = js_val.as_string() {
+                Value::String(s)
+            } else if let Some(b) = js_val.as_bool() {
+                Value::Boolean(b)
+            } else {
+                Value::Float(0.0) // Default fallback
+            }
+        })
+        .collect();
 
-    let (next, accepted) = mh_with_check(
+    // Convert observations if provided
+    let observations = observations.map(|obs| obs.inner.get_choices());
+
+    let (next, accepted) = metropolis_hastings_with_proposal(
+        rng.inner.clone(),
         trace.inner.clone(),
-        &sel,
+        &proposal.inner,
+        proposal_args,
         check,
-        &obs_map,
+        observations,
     )
     .map_err(|e| JsValue::from_str(&e))?;
 
