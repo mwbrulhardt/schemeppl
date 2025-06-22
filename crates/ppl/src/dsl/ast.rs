@@ -1,9 +1,10 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
-
-use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+use num_traits::ToPrimitive;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
@@ -11,6 +12,30 @@ pub enum Literal {
     Integer(i64),
     Float(f64),
     String(String),
+}
+
+impl ToPrimitive for Literal {
+    fn to_f64(&self) -> Option<f64> {
+        match self {
+            Literal::Float(f) => Some(*f),
+            Literal::Integer(i) => Some(*i as f64),
+            _ => None,
+        }
+    }
+
+    fn to_i64(&self) -> Option<i64> {
+        match self {
+            Literal::Integer(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    fn to_u64(&self) -> Option<u64> {
+        match self {
+            Literal::Integer(i) => Some(*i as u64),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -91,7 +116,7 @@ impl Env {
     }
 }
 
-impl fmt::Debug for Env {
+impl Debug for Env {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // show the symbols that are bound, and whether there is a parent
         let keys: Vec<_> = self.bindings.borrow().keys().cloned().collect();
@@ -102,7 +127,7 @@ impl fmt::Debug for Env {
     }
 }
 
-impl fmt::Debug for Procedure {
+impl Debug for Procedure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Procedure::Deterministic { .. } => f.write_str("<deterministic>"),
@@ -213,5 +238,93 @@ impl Value {
             Value::String(s) => Some(s),
             _ => None,
         }
+    }
+}
+
+// Conversion traits for Value <-> Literal
+impl From<Literal> for Value {
+    fn from(literal: Literal) -> Self {
+        match literal {
+            Literal::Boolean(b) => Value::Boolean(b),
+            Literal::Integer(i) => Value::Integer(i),
+            Literal::Float(f) => Value::Float(f),
+            Literal::String(s) => Value::String(s),
+        }
+    }
+}
+
+impl TryFrom<Value> for Literal {
+    type Error = String;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Boolean(b) => Ok(Literal::Boolean(b)),
+            Value::Integer(i) => Ok(Literal::Integer(i)),
+            Value::Float(f) => Ok(Literal::Float(f)),
+            Value::String(s) => Ok(Literal::String(s)),
+            _ => Err(format!("Cannot convert {:?} to Literal", value)),
+        }
+    }
+}
+
+// Convenience conversions for common cases
+impl From<bool> for Literal {
+    fn from(b: bool) -> Self {
+        Literal::Boolean(b)
+    }
+}
+
+impl From<i64> for Literal {
+    fn from(i: i64) -> Self {
+        Literal::Integer(i)
+    }
+}
+
+impl From<f64> for Literal {
+    fn from(f: f64) -> Self {
+        Literal::Float(f)
+    }
+}
+
+impl From<String> for Literal {
+    fn from(s: String) -> Self {
+        Literal::String(s)
+    }
+}
+
+impl From<&str> for Literal {
+    fn from(s: &str) -> Self {
+        Literal::String(s.to_string())
+    }
+}
+
+// Similar convenience conversions for Value
+impl From<bool> for Value {
+    fn from(b: bool) -> Self {
+        Value::Boolean(b)
+    }
+}
+
+impl From<i64> for Value {
+    fn from(i: i64) -> Self {
+        Value::Integer(i)
+    }
+}
+
+impl From<f64> for Value {
+    fn from(f: f64) -> Self {
+        Value::Float(f)
+    }
+}
+
+impl From<String> for Value {
+    fn from(s: String) -> Self {
+        Value::String(s)
+    }
+}
+
+impl From<&str> for Value {
+    fn from(s: &str) -> Self {
+        Value::String(s.to_string())
     }
 }

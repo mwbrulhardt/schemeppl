@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useWasmWorker } from '@/hooks/useWorker';
+import { useWorker } from '@/hooks/useWorker';
 import { Parameters } from '@/types/simulation';
 
 type BatchMsg = {
@@ -50,7 +50,7 @@ export function useSimulator() {
   });
 
   /* ------------------------ worker plumbing --------------------------- */
-  const { request, on } = useWasmWorker();
+  const { request, on } = useWorker();
 
   /* --------------------- internal mutable refs ------------------------ */
   const datasetRef = useRef<{ data: Float64Array; labels: Uint8Array } | null>(

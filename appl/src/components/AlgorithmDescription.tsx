@@ -88,19 +88,32 @@ export default function AlgorithmDescription() {
         <InlineMath math={'\\pi = 0.5'} />
       </h3>
       <pre className="bg-gray-50 p-4 rounded overflow-auto text-sm">
-        {`;; prior on component means
-(sample mu1 (normal 0.0 1.0))
-(sample mu2 (normal 0.0 1.0))
+        {`[data] {
+    ;; prior on component means
+    (sample mu1 (normal 0.0 1.0))
+    (sample mu2 (normal 0.0 1.0))
 
-;; identifiability constraint: add 0 to log-p if ordered, −∞ otherwise
-(constrain (< mu1 mu2))
+    ;; identifiability constraint: add 0 to log-p if ordered, −∞ otherwise
+    (constrain (< mu1 mu2))
 
-(define p 0.5)
-(define mix (mixture (list (normal mu1 1.0) (normal mu2 1.0)) (list p (- 1.0 p))))
+    (define p 0.5)
+    (define mix (mixture (list (normal mu1 1.0) (normal mu2 1.0)) (list p (- 1.0 p))))
 
-(define observe-point (lambda (x) (observe (gensym) mix x)))
+    (define observe-point (lambda (x) (observe (gensym) mix x)))
 
-(for-each observe-point data)`}
+    (for-each observe-point data)
+}`}
+      </pre>
+
+      <h3 className="text-lg font-semibold mt-6 mb-3">
+        Proposal Generative Function Specification
+      </h3>
+      <pre className="bg-gray-50 p-4 rounded overflow-auto text-sm">
+        {`[current_mu1, current_mu2, tau1, tau2] {
+    (sample mu1 (normal current_mu1 tau1))
+    (sample mu2 (normal current_mu2 tau2))
+    #t
+}`}
       </pre>
     </div>
   );

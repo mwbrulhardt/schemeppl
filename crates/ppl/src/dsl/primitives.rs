@@ -1,12 +1,11 @@
-use crate::ast::{Procedure, Value};
-use rand::RngCore;
-
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::ast::HostFn;
+use rand::RngCore;
+
 use crate::distributions::{Condition, DistributionExtended, Mixture};
+use crate::dsl::ast::{HostFn, Procedure, Value};
 
 /// Make a gensym.
 pub fn make_gensym(args: Vec<Value>) -> Result<Value, String> {
@@ -171,6 +170,40 @@ pub fn list(args: Vec<Value>) -> Result<Value, String> {
 pub fn display(v: Vec<Value>) -> Result<Value, String> {
     print!("{:?}", v);
     Ok(Value::List(vec![]))
+}
+
+pub fn car(args: Vec<Value>) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("car expects exactly 1 argument".to_string());
+    }
+
+    match &args[0] {
+        Value::List(list) => {
+            if list.is_empty() {
+                Err("car: cannot take car of empty list".to_string())
+            } else {
+                Ok(list[0].clone())
+            }
+        }
+        _ => Err("car expects a list argument".to_string()),
+    }
+}
+
+pub fn cdr(args: Vec<Value>) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("cdr expects exactly 1 argument".to_string());
+    }
+
+    match &args[0] {
+        Value::List(list) => {
+            if list.is_empty() {
+                Err("cdr: cannot take cdr of empty list".to_string())
+            } else {
+                Ok(Value::List(list[1..].to_vec()))
+            }
+        }
+        _ => Err("cdr expects a list argument".to_string()),
+    }
 }
 
 pub trait Parseable: Sized {

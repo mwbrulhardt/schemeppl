@@ -44,7 +44,7 @@ interface WorkerResponse<T = unknown> {
  * unmount.  Each outbound request is tagged with a UUID so that concurrent
  * requests can be resolved independently.
  */
-export function useWasmWorker() {
+export function useWorker() {
   const workerRef = useRef<Worker | null>(null);
 
   /* Lazily create the worker exactly once (singleton) */

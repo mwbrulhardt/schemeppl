@@ -1,19 +1,25 @@
 use std::collections::HashMap;
-use std::collections::HashSet;
 
 use rand::distributions::{Bernoulli, Distribution};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use statrs::distribution::Normal;
 
+use ppl::address::{Address, Selection};
+use ppl::dsl::trace::SchemeGenerativeFunction;
+use ppl::dsl::{Expression, Literal, Value};
+use ppl::gfi::GenerativeFunction;
+use ppl::inference::metropolis_hastings;
+use ppl::r#gen;
 use ppl::utils::compute_mean_and_variance;
-use ppl::{mh, r#gen, Expression, GenerativeFunction, Literal, Value};
+use std::sync::{Arc, Mutex};
 
 #[test]
 fn test_univariate_gaussian_no_parse() {
     let mut rng = rand::thread_rng();
     let data_dist = Normal::new(5.0, 1.0).unwrap();
     let data: Vec<f64> = (0..100).map(|_| data_dist.sample(&mut rng)).collect();
+    let data_values = Value::List(data.iter().map(|&x| Value::Float(x)).collect());
 
     let mut model = vec![Expression::Sample {
         distribution: Box::new(Expression::List(vec![
@@ -39,19 +45,27 @@ fn test_univariate_gaussian_no_parse() {
     let mut scales = HashMap::new();
     scales.insert("mu".to_string(), 1.0);
 
-    let program = GenerativeFunction::new(model, vec![], scales, 42);
+    let program = SchemeGenerativeFunction::new(model, vec![]);
 
-    let mut trace = program.simulate(vec![]).unwrap();
+    let inference_rng = Arc::new(Mutex::new(StdRng::seed_from_u64(42)));
+    let mut trace = program.simulate(inference_rng.clone(), vec![data_values]);
 
-    let selection = HashSet::from_iter(vec!["mu".to_string()]);
+    // Use Selection::Static for selecting mu
+    let selection = Selection::Static(Box::new(Selection::All), Address::Symbol("mu".to_string()));
+
+    // Burn-in
     for _ in 0..100 {
-        let (t, _) = mh(&program, trace, &selection).unwrap();
+        let (t, _) =
+            metropolis_hastings(inference_rng.clone(), trace, selection.clone(), None, None)
+                .unwrap();
         trace = t;
     }
 
     let mut history = Vec::new();
     for _ in 0..100 {
-        let (t, _) = mh(&program, trace, &selection).unwrap();
+        let (t, _) =
+            metropolis_hastings(inference_rng.clone(), trace, selection.clone(), None, None)
+                .unwrap();
         trace = t;
         history.push(trace.clone());
     }
@@ -88,6 +102,8 @@ fn test_gmm_no_parse() {
     let data: Vec<f64> = (0..num_samples)
         .map(|i| if z[i] { c1[i] } else { c2[i] })
         .collect();
+
+    let data_values = Value::List(data.iter().map(|&x| Value::Float(x)).collect());
 
     // Define model
     let mut model = vec![Expression::Define(
@@ -170,19 +186,27 @@ fn test_gmm_no_parse() {
     scales.insert("mu1".to_string(), 1.0);
     scales.insert("mu2".to_string(), 1.0);
 
-    let program = GenerativeFunction::new(model, vec![], scales, 42);
+    let program = SchemeGenerativeFunction::new(model, vec![]);
 
-    let mut trace = program.simulate(vec![]).unwrap();
+    let inference_rng = Arc::new(Mutex::new(StdRng::seed_from_u64(42)));
+    let mut trace = program.simulate(inference_rng.clone(), vec![data_values]);
 
-    let selection = HashSet::from_iter(vec!["mu1".to_string(), "mu2".to_string()]);
+    // Create selection for both mu1 and mu2 - use Selection::All for simplicity
+    let selection = Selection::All;
+
+    // Burn-in
     for _ in 0..n {
-        let (t, _) = mh(&program, trace, &selection).unwrap();
+        let (t, _) =
+            metropolis_hastings(inference_rng.clone(), trace, selection.clone(), None, None)
+                .unwrap();
         trace = t;
     }
 
     let mut history = Vec::with_capacity(n);
     for _ in 0..n {
-        let (t, _) = mh(&program, trace, &selection).unwrap();
+        let (t, _) =
+            metropolis_hastings(inference_rng.clone(), trace, selection.clone(), None, None)
+                .unwrap();
         trace = t;
         history.push(trace.clone());
     }
@@ -202,7 +226,7 @@ fn test_gmm_parse() {
     const SEED: u64 = 42;
     const BURN_IN: usize = 100;
     const DRAW: usize = 1000;
-    const PROP_SD: f64 = 0.15;
+    const _PROP_SD: f64 = 0.15;
 
     let data_seed = 40;
     let mut rng = StdRng::seed_from_u64(data_seed);
@@ -233,7 +257,7 @@ fn test_gmm_parse() {
             .collect(),
     );
 
-    let model = gen!(
+    let model = gen!([data] {
         // Priors
         (sample mu1 (normal 0.0 1.0))
         (sample mu2 (normal 0.0 1.0))
@@ -248,21 +272,22 @@ fn test_gmm_parse() {
         (define observe-point (lambda (x) (observe (gensym) mix x)))
 
         (for-each observe-point data)
-    );
+    });
 
     let mu1_name = "mu1".to_string();
     let mu2_name = "mu2".to_string();
 
-    let mut scales = HashMap::new();
-    scales.insert(mu1_name.clone(), PROP_SD);
-    scales.insert(mu2_name.clone(), PROP_SD);
+    let inference_rng = Arc::new(Mutex::new(StdRng::seed_from_u64(SEED)));
 
-    let program = GenerativeFunction::new(model, vec!["data".to_string()], scales, SEED);
+    // Create selection for both mu1 and mu2 - use Selection::All for simplicity
+    let selection = Selection::All;
+    let mut trace = model.simulate(inference_rng.clone(), vec![data]);
 
-    let selection = HashSet::from_iter(vec![mu1_name.clone(), mu2_name.clone()]);
-    let mut trace = program.simulate(vec![data]).unwrap();
+    // Burn-in
     for _ in 0..BURN_IN {
-        let (t, _) = mh(&program, trace, &selection).unwrap();
+        let (t, _) =
+            metropolis_hastings(inference_rng.clone(), trace, selection.clone(), None, None)
+                .unwrap();
         trace = t;
     }
 
@@ -270,7 +295,9 @@ fn test_gmm_parse() {
     let mut num_accepted = 0u32;
 
     for _ in 0..DRAW {
-        let (t, accepted) = mh(&program, trace, &selection).unwrap();
+        let (t, accepted) =
+            metropolis_hastings(inference_rng.clone(), trace, selection.clone(), None, None)
+                .unwrap();
         trace = t;
         if accepted {
             num_accepted += 1;

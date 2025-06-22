@@ -1,5 +1,6 @@
-use crate::{Expression, Literal};
 use std::convert::TryFrom;
+
+use crate::dsl::ast::{Expression, Literal};
 
 impl TryFrom<lexpr::Value> for Expression {
     type Error = String;
@@ -154,27 +155,38 @@ pub fn parse_string(input: &str) -> Vec<Expression> {
 
 #[macro_export]
 macro_rules! gen {
-    ( $($tt:tt)* ) => {{
-        // turn the tokens back into a string like "#t x (lambda (x) x) (* x x)"
-        let src = stringify!($($tt)*);
-        // wrap in parens so our parser sees one top-level list of forms
+    // Version that takes parameter names and creates a SchemeGenerativeFunction
+    ([$($param:ident),*] { $($body:tt)* }) => {{
+        let src = stringify!($($body)*);
         let wrapped = format!("( {} )", src);
-        // hand off to your parser
-        let exprs = $crate::parser::parse_string(&wrapped);
+        let exprs = $crate::dsl::parser::parse_string(&wrapped);
+        let param_names = vec![$(stringify!($param).to_string()),*];
+        $crate::dsl::trace::SchemeGenerativeFunction::new(exprs, param_names)
+    }};
 
+    // Original version that just returns expressions (for backward compatibility)
+    ( $($tt:tt)* ) => {{
+        let src = stringify!($($tt)*);
+        let wrapped = format!("( {} )", src);
+        let exprs = $crate::dsl::parser::parse_string(&wrapped);
         exprs
     }};
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::address::Selection;
+    use crate::dsl::ast::Value;
+    use crate::gfi::GenerativeFunction;
+    use crate::inference::metropolis_hastings;
+    use crate::sym;
     use rand::distributions::{Bernoulli, Distribution};
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
     use statrs::distribution::Normal;
     use std::collections::HashMap;
-    use std::collections::HashSet;
-
-    use super::*;
-    use crate::{mh, GenerativeFunction, Value};
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_mixture() {
@@ -249,8 +261,9 @@ mod tests {
     #[test]
     fn test_model() {
         let n = 1000;
+        let rng = Arc::new(Mutex::new(StdRng::seed_from_u64(42)));
 
-        let model = gen!(
+        let model = gen!([] {
             // Priors
             (sample mu1 (normal 0.0 1.0))
             (sample mu2 (normal 0.0 1.0))
@@ -463,32 +476,33 @@ mod tests {
             (observe x197 mix 0.7867700961413551)
             (observe x198 mix -1.0557808035505016)
             (observe x199 mix -1.678998377846264)
-        );
+        });
 
         let mut scales = HashMap::new();
         scales.insert("mu1".to_string(), 0.15);
         scales.insert("mu2".to_string(), 0.15);
 
-        let program = GenerativeFunction::new(model, vec![], scales, 42);
-
-        let mut trace = program.simulate(vec![]).unwrap();
+        let mut trace = model.simulate(rng.clone(), vec![]);
+        let mu1 = sym!(mu1);
+        let mu2 = sym!(mu2);
 
         // Print initial mu
-        if let Value::Float(mu1) = trace.get_choice(&"mu1".to_string()).value {
+        if let Some(mu1) = trace.get_choice_value(&mu1).unwrap().as_float() {
             println!("Initial mu1: {}", mu1);
         }
-        if let Value::Float(mu2) = trace.get_choice(&"mu2".to_string()).value {
+        if let Some(mu2) = trace.get_choice_value(&mu2).unwrap().as_float() {
             println!("Initial mu1: {}", mu2);
         }
 
-        let selection = HashSet::from_iter(vec!["mu1".to_string(), "mu2".to_string()]);
+        let selection = Selection::All;
         for i in 0..n {
-            let (new_trace, weight) = mh(&program, trace, &selection).unwrap();
+            let (new_trace, weight) =
+                metropolis_hastings(rng.clone(), trace, selection.clone(), None, None).unwrap();
             if i % 10 == 0 {
-                if let Value::Float(mu1) = new_trace.get_choice(&"mu1".to_string()).value {
+                if let Some(mu1) = new_trace.get_choice_value(&mu1).unwrap().as_float() {
                     println!("Warmup step {}: mu1 = {}, weight = {}", i, mu1, weight);
                 }
-                if let Value::Float(mu2) = new_trace.get_choice(&"mu2".to_string()).value {
+                if let Some(mu2) = new_trace.get_choice_value(&mu2).unwrap().as_float() {
                     println!("Warmup step {}: mu2 = {}, weight = {}", i, mu2, weight);
                 }
             }
@@ -498,20 +512,21 @@ mod tests {
         let mut samples_mu1 = Vec::new();
         let mut samples_mu2 = Vec::new();
         for i in 0..n {
-            let (new_trace, accepted) = mh(&program, trace, &selection).unwrap();
+            let (new_trace, accepted) =
+                metropolis_hastings(rng.clone(), trace, selection.clone(), None, None).unwrap();
             if i % 10 == 0 {
-                if let Value::Float(mu1) = new_trace.get_choice(&"mu1".to_string()).value {
+                if let Some(mu1) = new_trace.get_choice_value(&mu1).unwrap().as_float() {
                     println!("Sample step {}: mu = {}, accepted = {}", i, mu1, accepted);
                 }
-                if let Value::Float(mu2) = new_trace.get_choice(&"mu2".to_string()).value {
+                if let Some(mu2) = new_trace.get_choice_value(&mu2).unwrap().as_float() {
                     println!("Sample step {}: mu = {}, accepted = {}", i, mu2, accepted);
                 }
             }
             if accepted {
-                if let Value::Float(mu1) = new_trace.get_choice(&"mu1".to_string()).value {
+                if let Some(mu1) = new_trace.get_choice_value(&mu1).unwrap().as_float() {
                     samples_mu1.push(mu1);
                 }
-                if let Value::Float(mu2) = new_trace.get_choice(&"mu2".to_string()).value {
+                if let Some(mu2) = new_trace.get_choice_value(&mu2).unwrap().as_float() {
                     samples_mu2.push(mu2);
                 }
             }
@@ -552,7 +567,7 @@ mod tests {
 
     #[test]
     fn test_model_compact() {
-        let mut rng = rand::thread_rng();
+        let rng = Arc::new(Mutex::new(StdRng::seed_from_u64(42)));
 
         let n = 1000;
         let num_samples = 200;
@@ -561,16 +576,18 @@ mod tests {
         let sigma = 1.0;
         let p = 0.5;
         let z_dist = Bernoulli::new(p).unwrap();
-        let z: Vec<bool> = (0..num_samples).map(|_| z_dist.sample(&mut rng)).collect();
+        let z: Vec<bool> = (0..num_samples)
+            .map(|_| z_dist.sample(&mut *rng.lock().unwrap()))
+            .collect();
 
         let component1 = Normal::new(mu1, sigma).unwrap();
         let c1: Vec<f64> = (0..num_samples)
-            .map(|_| component1.sample(&mut rng))
+            .map(|_| component1.sample(&mut *rng.lock().unwrap()))
             .collect();
 
         let component2 = Normal::new(mu2, sigma).unwrap();
         let c2: Vec<f64> = (0..num_samples)
-            .map(|_| component2.sample(&mut rng))
+            .map(|_| component2.sample(&mut *rng.lock().unwrap()))
             .collect();
 
         let data: Vec<f64> = (0..num_samples)
@@ -578,7 +595,7 @@ mod tests {
             .collect();
         let wrapped_data = Value::List(data.into_iter().map(|x| Value::Float(x)).collect());
 
-        let model = gen!(
+        let model = gen!([] {
             // Priors
             (sample mu1 (normal 0.0 1.0))
             (sample mu2 (normal 0.0 1.0))
@@ -593,32 +610,33 @@ mod tests {
             (define observe-point (lambda (x) (observe (gensym) mix x)))
 
             (for-each observe-point data)
-        );
+        });
 
         let mut scales = HashMap::new();
         scales.insert("mu1".to_string(), 0.15);
         scales.insert("mu2".to_string(), 0.15);
 
-        let program = GenerativeFunction::new(model, vec!["data".to_string()], scales, 42);
-
-        let mut trace = program.simulate(vec![wrapped_data]).unwrap();
+        let mut trace = model.simulate(rng.clone(), vec![wrapped_data]);
 
         // Print initial mu
-        if let Value::Float(mu1) = trace.get_choice(&"mu1".to_string()).value {
+        let mu1_sym = sym!(mu1);
+        let mu2_sym = sym!(mu2);
+        if let Some(mu1) = trace.get_choice_value(&mu1_sym).unwrap().as_float() {
             println!("Initial mu1: {}", mu1);
         }
-        if let Value::Float(mu2) = trace.get_choice(&"mu2".to_string()).value {
-            println!("Initial mu1: {}", mu2);
+        if let Some(mu2) = trace.get_choice_value(&mu2_sym).unwrap().as_float() {
+            println!("Initial mu2: {}", mu2);
         }
 
-        let selection = HashSet::from_iter(vec!["mu1".to_string(), "mu2".to_string()]);
+        let selection = Selection::All;
         for i in 0..n {
-            let (new_trace, weight) = mh(&program, trace, &selection).unwrap();
+            let (new_trace, weight) =
+                metropolis_hastings(rng.clone(), trace, selection.clone(), None, None).unwrap();
             if i % 10 == 0 {
-                if let Value::Float(mu1) = new_trace.get_choice(&"mu1".to_string()).value {
+                if let Some(mu1) = new_trace.get_choice_value(&mu1_sym).unwrap().as_float() {
                     println!("Warmup step {}: mu1 = {}, weight = {}", i, mu1, weight);
                 }
-                if let Value::Float(mu2) = new_trace.get_choice(&"mu2".to_string()).value {
+                if let Some(mu2) = new_trace.get_choice_value(&mu2_sym).unwrap().as_float() {
                     println!("Warmup step {}: mu2 = {}, weight = {}", i, mu2, weight);
                 }
             }
@@ -628,20 +646,21 @@ mod tests {
         let mut samples_mu1 = Vec::new();
         let mut samples_mu2 = Vec::new();
         for i in 0..n {
-            let (new_trace, accepted) = mh(&program, trace, &selection).unwrap();
+            let (new_trace, accepted) =
+                metropolis_hastings(rng.clone(), trace, selection.clone(), None, None).unwrap();
             if i % 10 == 0 {
-                if let Value::Float(mu1) = new_trace.get_choice(&"mu1".to_string()).value {
+                if let Some(mu1) = new_trace.get_choice_value(&mu1_sym).unwrap().as_float() {
                     println!("Sample step {}: mu = {}, accepted = {}", i, mu1, accepted);
                 }
-                if let Value::Float(mu2) = new_trace.get_choice(&"mu2".to_string()).value {
+                if let Some(mu2) = new_trace.get_choice_value(&mu2_sym).unwrap().as_float() {
                     println!("Sample step {}: mu = {}, accepted = {}", i, mu2, accepted);
                 }
             }
             if accepted {
-                if let Value::Float(mu1) = new_trace.get_choice(&"mu1".to_string()).value {
+                if let Some(mu1) = new_trace.get_choice_value(&mu1_sym).unwrap().as_float() {
                     samples_mu1.push(mu1);
                 }
-                if let Value::Float(mu2) = new_trace.get_choice(&"mu2".to_string()).value {
+                if let Some(mu2) = new_trace.get_choice_value(&mu2_sym).unwrap().as_float() {
                     samples_mu2.push(mu2);
                 }
             }

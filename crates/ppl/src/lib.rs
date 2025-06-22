@@ -1,13 +1,16 @@
-pub mod ast;
+pub mod address;
+pub mod choice_map;
 pub mod distributions;
-pub mod eval;
-pub mod parser;
-pub mod primitives;
-pub mod trace;
+pub mod dsl;
+pub mod gfi;
+pub mod inference;
+pub mod trie;
+
+pub use address::*;
+pub use choice_map::*;
+pub use gfi::*;
+pub use trie::*;
+
 pub mod utils;
 
-pub use ast::{Env, Expression, HostFn, Literal, Procedure, Value};
-pub use eval::{mh, GenerativeFunction};
-pub use parser::parse_string;
-pub use primitives::*;
-pub use trace::{ChoiceMap, Trace};
+pub use inference::{metropolis_hastings, metropolis_hastings_with_proposal};
