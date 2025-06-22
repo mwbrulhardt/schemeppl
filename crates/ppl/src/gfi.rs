@@ -61,7 +61,7 @@ where
 
     /// Get the value of the random choice at address `addr`.
     fn get_value(&self, addr: &Address) -> Option<C> {
-        self.get_choices().get(addr)?.as_value().cloned()
+        self.get_choices().get_value(addr).cloned()
     }
 
     /// Estimate the probability that the selected choices take the values they do in a trace.

@@ -6,6 +6,8 @@ use std::iter::Map;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
+use num_traits::ToPrimitive;
+
 use crate::dsl::ast::{Env, Expression, Literal, Value};
 use crate::dsl::eval::{eval, eval_distribution, standard_env};
 use crate::r#gen;
@@ -31,6 +33,23 @@ impl Record {
             Record::Choice(_, score) => *score,
             Record::Call(_, score) => *score,
         }
+    }
+}
+
+impl ToPrimitive for Record {
+    fn to_f64(&self) -> Option<f64> {
+        match self {
+            Record::Choice(literal, _) => literal.to_f64(),
+            Record::Call(_, _) => None,
+        }
+    }
+
+    fn to_i64(&self) -> Option<i64> {
+        self.to_f64()?.to_i64()
+    }
+
+    fn to_u64(&self) -> Option<u64> {
+        self.to_f64()?.to_u64()
     }
 }
 
@@ -78,8 +97,20 @@ impl SchemeChoiceMap {
 }
 
 impl ChoiceMapQuery<Record> for SchemeChoiceMap {
-    fn get_dyn(&self, addr: &Address) -> Option<&dyn ChoiceMapQuery<Record>> {
-        // For our simple implementation, we only support leaf nodes
+    /// Check if an address exists in this choice map
+    fn contains(&self, addr: &Address) -> bool {
+        let path = Self::address_to_path(addr);
+        self.trie.contains(&path)
+    }
+
+    /// Get the value at this address if it exists
+    fn get_value(&self, addr: &Address) -> Option<&Record> {
+        let path = Self::address_to_path(addr);
+        self.trie.get(&path)
+    }
+
+    /// Get the sub-choice-map at this address
+    fn get_submap(&self, addr: &Address) -> Option<&Self> {
         if self.contains(addr) {
             Some(self)
         } else {
@@ -98,7 +129,8 @@ impl ChoiceMapQuery<Record> for SchemeChoiceMap {
         None
     }
 
-    fn keys(&self) -> Vec<Address> {
+    /// Get direct child addresses (not all descendants)
+    fn get_children_addresses(&self) -> Vec<Address> {
         // Get all the paths from the trie and convert them back to addresses
         let mut keys = Vec::new();
         for (path, _) in self.trie.iter() {
@@ -114,6 +146,17 @@ impl ChoiceMapQuery<Record> for SchemeChoiceMap {
     fn is_empty(&self) -> bool {
         self.trie.is_empty()
     }
+
+    /// Get the total number of values in this choice map
+    fn len(&self) -> usize {
+        self.trie.iter().count()
+    }
+}
+
+impl Default for SchemeChoiceMap {
+    fn default() -> Self {
+        Self::new(Trie::new())
+    }
 }
 
 impl ChoiceMap<Record> for SchemeChoiceMap {
@@ -121,14 +164,6 @@ impl ChoiceMap<Record> for SchemeChoiceMap {
         = Map<TrieIter<'a, Record>, fn((Vec<Address>, &'a Record)) -> (Address, &'a Record)>
     where
         Self: 'a;
-
-    fn get(&self, addr: &Address) -> Option<&Self> {
-        if self.contains(addr) {
-            Some(self)
-        } else {
-            None
-        }
-    }
 
     fn set_value(&mut self, addr: Address, value: Record) {
         self.set_value_at(addr, value);
@@ -139,18 +174,19 @@ impl ChoiceMap<Record> for SchemeChoiceMap {
         self.trie.remove(&path).is_some()
     }
 
-    fn empty() -> Self {
-        Self::new(Trie::new())
-    }
-
     fn filter(&self, selection: &Selection) -> Self {
-        let mut filtered = Self::empty();
+        let mut filtered = Self::default();
         for (addr, value) in self.iter() {
             if selection.contains(&addr) {
                 filtered.set_value_at(addr, value.clone());
             }
         }
         filtered
+    }
+
+    /// Get all addresses (not just direct children)
+    fn get_all_addresses(&self) -> Vec<Address> {
+        self.iter().map(|(addr, _)| addr).collect()
     }
 
     fn iter(&self) -> Self::Iter<'_> {
@@ -333,7 +369,7 @@ impl Trace<Value, Record> for SchemeDSLTrace {
             })?;
 
         // Step 4: Calculate discard - choices that were overwritten or removed
-        let mut discard = SchemeChoiceMap::empty();
+        let mut discard = SchemeChoiceMap::default();
 
         // Fast approach: Only check addresses that were actually constrained
         // This is equivalent to the expensive filtering but O(k) instead of O(n²)
@@ -624,16 +660,6 @@ impl GenerativeFunction<Value, Record> for SchemeGenerativeFunction {
     }
 }
 
-// Add ToF64 implementation for Record to support utils.rs
-impl crate::utils::ToF64 for Record {
-    fn to_f64(&self) -> Result<f64, String> {
-        match self {
-            Record::Choice(literal, _) => literal.to_f64(),
-            Record::Call(_, _) => Err("Cannot convert Call record to f64".to_string()),
-        }
-    }
-}
-
 // Add From conversion for Record to Value
 impl From<Record> for Value {
     fn from(record: Record) -> Self {
@@ -735,7 +761,7 @@ mod tests {
 
     #[test]
     fn test_choice_map_operations() {
-        let mut choice_map = SchemeChoiceMap::empty();
+        let mut choice_map = SchemeChoiceMap::default();
 
         // Test empty map
         assert!(choice_map.is_empty());
@@ -975,7 +1001,7 @@ mod tests {
         initial_trace.set_retval(Value::Float(42.0));
 
         // Create constraints (new values for some choices)
-        let mut constraints = SchemeChoiceMap::empty();
+        let mut constraints = SchemeChoiceMap::default();
         constraints.set_value_at(
             Address::Symbol("x".to_string()),
             Record::Choice(Literal::Float(15.0), 0.7), // New value for x
@@ -1047,7 +1073,7 @@ mod tests {
             .unwrap();
         initial_trace.set_retval(Value::Float(100.0));
 
-        let constraints = SchemeChoiceMap::empty(); // No constraints
+        let constraints = SchemeChoiceMap::default(); // No constraints
         let rng = Arc::new(Mutex::new(StdRng::seed_from_u64(123)));
         let argdiffs = vec![ArgDiff::Changed]; // Argument changed
 
@@ -1074,7 +1100,7 @@ mod tests {
             .unwrap();
         initial_trace.set_retval(Value::Float(3.0));
 
-        let constraints = SchemeChoiceMap::empty(); // Empty constraints
+        let constraints = SchemeChoiceMap::default(); // Empty constraints
         let rng = Arc::new(Mutex::new(StdRng::seed_from_u64(456)));
         let argdiffs = vec![ArgDiff::NoChange];
 
@@ -1118,7 +1144,7 @@ mod tests {
         initial_trace.set_retval(Value::Float(0.0));
 
         // Create constraint with the same address but different value
-        let mut constraints = SchemeChoiceMap::empty();
+        let mut constraints = SchemeChoiceMap::default();
         constraints.set_value_at(
             Address::Symbol("same_addr".to_string()),
             Record::Choice(Literal::Float(200.0), 0.2), // Different value

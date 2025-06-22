@@ -246,6 +246,7 @@ dependencies = [
  "lexpr",
  "nalgebra",
  "ndarray",
+ "num-traits",
  "rand",
  "serde",
  "serde_json",

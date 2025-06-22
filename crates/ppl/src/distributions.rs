@@ -13,6 +13,7 @@ fn logsumexp(x: &[f64]) -> f64 {
     mx + sum_exp.ln()
 }
 
+/// A trait for extended distributions
 pub trait DistributionExtended<T>: Debug {
     fn sample_dyn(&self, rng: &mut dyn RngCore) -> T;
     fn log_prob(&self, value: T) -> f64;

@@ -1,5 +1,6 @@
-use crate::dsl::ast::{Expression, Literal};
 use std::convert::TryFrom;
+
+use crate::dsl::ast::{Expression, Literal};
 
 impl TryFrom<lexpr::Value> for Expression {
     type Error = String;

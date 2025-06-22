@@ -8,6 +8,7 @@ use ppl::distributions::DistributionExtended;
 use ppl::dsl::ast::Value;
 use ppl::dsl::parser::parse_string;
 use ppl::dsl::trace::{Record, SchemeDSLTrace, SchemeGenerativeFunction};
+use ppl::dsl::Literal;
 use ppl::gfi::{GenerativeFunction, Trace};
 use ppl::inference::{metropolis_hastings, metropolis_hastings_with_proposal};
 
@@ -187,8 +188,8 @@ impl JsTrace {
         if let Some(record) = self.inner.get_value(&addr) {
             match record {
                 Record::Choice(literal, _) => match literal {
-                    ppl::dsl::ast::Literal::Float(f) => f,
-                    ppl::dsl::ast::Literal::Integer(i) => i as f64,
+                    Literal::Float(f) => f,
+                    Literal::Integer(i) => i as f64,
                     _ => 0.0,
                 },
                 _ => 0.0,
@@ -212,9 +213,9 @@ impl JsTrace {
 
             let value = match record {
                 Record::Choice(literal, _) => match literal {
-                    ppl::dsl::ast::Literal::Float(f) => *f,
-                    ppl::dsl::ast::Literal::Integer(i) => *i as f64,
-                    ppl::dsl::ast::Literal::Boolean(b) => {
+                    Literal::Float(f) => *f,
+                    Literal::Integer(i) => *i as f64,
+                    Literal::Boolean(b) => {
                         if *b {
                             1.0
                         } else {

@@ -7,10 +7,11 @@ use statrs::distribution::Normal;
 
 use ppl::address::{Address, Selection};
 use ppl::dsl::trace::SchemeGenerativeFunction;
+use ppl::dsl::{Expression, Literal, Value};
 use ppl::gfi::GenerativeFunction;
 use ppl::inference::metropolis_hastings;
+use ppl::r#gen;
 use ppl::utils::compute_mean_and_variance;
-use ppl::{r#gen, Expression, Literal, Value};
 use std::sync::{Arc, Mutex};
 
 #[test]

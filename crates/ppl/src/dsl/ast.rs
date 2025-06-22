@@ -1,9 +1,10 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
-
-use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+use num_traits::ToPrimitive;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
@@ -11,6 +12,30 @@ pub enum Literal {
     Integer(i64),
     Float(f64),
     String(String),
+}
+
+impl ToPrimitive for Literal {
+    fn to_f64(&self) -> Option<f64> {
+        match self {
+            Literal::Float(f) => Some(*f),
+            Literal::Integer(i) => Some(*i as f64),
+            _ => None,
+        }
+    }
+
+    fn to_i64(&self) -> Option<i64> {
+        match self {
+            Literal::Integer(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    fn to_u64(&self) -> Option<u64> {
+        match self {
+            Literal::Integer(i) => Some(*i as u64),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -91,7 +116,7 @@ impl Env {
     }
 }
 
-impl fmt::Debug for Env {
+impl Debug for Env {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // show the symbols that are bound, and whether there is a parent
         let keys: Vec<_> = self.bindings.borrow().keys().cloned().collect();
@@ -102,7 +127,7 @@ impl fmt::Debug for Env {
     }
 }
 
-impl fmt::Debug for Procedure {
+impl Debug for Procedure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Procedure::Deterministic { .. } => f.write_str("<deterministic>"),

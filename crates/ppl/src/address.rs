@@ -1,4 +1,8 @@
 use std::fmt::{Debug, Display};
+use std::ops::BitAnd;
+use std::ops::BitOr;
+use std::ops::Index;
+use std::ops::Not;
 
 // Address can be single component or multiple components (tuple)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -9,7 +13,6 @@ pub enum Address {
     Path(Vec<Address>),
 }
 
-// From implementations for easy construction
 impl From<&str> for Address {
     fn from(s: &str) -> Self {
         Address::Symbol(s.to_string())
@@ -60,7 +63,7 @@ impl Address {
     }
 }
 
-/// Selection types - simplified and more functional
+/// Selection types
 #[derive(Clone, PartialEq, Debug)]
 pub enum Selection {
     All,
@@ -86,7 +89,6 @@ impl Selection {
     }
 
     /// Navigate to a subselection at the given address
-    /// Equivalent to Python's __call__ method
     pub fn call(&self, addr: Address) -> Selection {
         match addr {
             // For path addresses, navigate through each component
@@ -210,7 +212,7 @@ impl From<&Address> for Selection {
     }
 }
 
-impl std::ops::Index<Address> for Selection {
+impl Index<Address> for Selection {
     type Output = bool;
 
     /// Index operation returns whether the address is contained in the selection
@@ -223,7 +225,7 @@ impl std::ops::Index<Address> for Selection {
     }
 }
 
-impl std::ops::BitOr for Selection {
+impl BitOr for Selection {
     type Output = Selection;
 
     fn bitor(self, rhs: Self) -> Self::Output {
@@ -238,7 +240,7 @@ impl std::ops::BitOr for Selection {
     }
 }
 
-impl std::ops::BitAnd for Selection {
+impl BitAnd for Selection {
     type Output = Selection;
 
     fn bitand(self, rhs: Self) -> Self::Output {
@@ -253,7 +255,7 @@ impl std::ops::BitAnd for Selection {
     }
 }
 
-impl std::ops::Not for Selection {
+impl Not for Selection {
     type Output = Selection;
 
     fn not(self) -> Self::Output {
@@ -272,7 +274,7 @@ impl std::ops::Not for Selection {
 
 /// Macro to create selections
 #[macro_export]
-macro_rules! s {
+macro_rules! select {
     ($x:ident) => {
         $crate::address::Selection::Static(Box::new($crate::address::Selection::All), $crate::address::Address::Symbol(stringify!($x).to_string()))
     };
@@ -326,7 +328,7 @@ macro_rules! path {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{path, s, sym};
+    use crate::{path, select, sym};
 
     #[test]
     fn test_address_macros() {
@@ -348,11 +350,11 @@ mod tests {
     #[test]
     fn test_selection() {
         // Test single symbol selection
-        let selection = s!(x);
+        let selection = select!(x);
         assert!(selection == Selection::Static(Box::new(Selection::All), sym!(x)));
 
         // Test path selection - now creates nested structure
-        let selection = s!(x, y, z);
+        let selection = select!(x, y, z);
         let expected = Selection::Static(
             Box::new(Selection::Static(
                 Box::new(Selection::Static(Box::new(Selection::Leaf), sym!(z))),
@@ -363,7 +365,7 @@ mod tests {
         assert!(selection == expected);
 
         // Test union of selections
-        let selection = s!(x) | s!(z, y);
+        let selection = select!(x) | select!(z, y);
         let expected_zy = Selection::Static(
             Box::new(Selection::Static(Box::new(Selection::Leaf), sym!(y))),
             sym!(z),
@@ -380,13 +382,13 @@ mod tests {
         assert!(selection[path!(z, y)]);
         assert!(!selection[path!(z, y, tail)]);
 
-        let selection = s!(x);
+        let selection = select!(x);
         assert!(selection[sym!(x)]);
         assert!(selection[path!(x)]);
         assert!(selection[path!(x, y)]);
         assert!(selection[path!(x, y, z)]);
 
-        let selection = s!(x, y, z);
+        let selection = select!(x, y, z);
         assert!(selection[path!(x, y, z)]);
         assert!(!selection[sym!(x)]);
         assert!(!selection[path!(x, y)]);
@@ -394,7 +396,7 @@ mod tests {
 
     #[test]
     fn test_wildcard_selection() {
-        let selection = s!(x) | s!(*, y);
+        let selection = select!(x) | select!(*, y);
 
         assert!(selection[sym!(x)]);
         assert!(selection[path!(any_address, y)]);
@@ -428,7 +430,7 @@ mod tests {
 
     #[test]
     fn test_selection_complement() {
-        let selection = s!(x) | s!(y);
+        let selection = select!(x) | select!(y);
         let complement = !selection.clone();
         assert!(!complement[sym!(x)]);
         assert!(!complement[sym!(y)]);
@@ -442,8 +444,8 @@ mod tests {
 
     #[test]
     fn test_selection_and() {
-        let sel1 = s!(x) | s!(y);
-        let sel2 = s!(y) | s!(z);
+        let sel1 = select!(x) | select!(y);
+        let sel2 = select!(y) | select!(z);
         let and_sel = sel1.clone() & sel2.clone();
         assert!(!and_sel[sym!(x)]);
         assert!(and_sel[sym!(y)]);
@@ -468,8 +470,8 @@ mod tests {
 
     #[test]
     fn test_selection_or() {
-        let sel1 = s!(x);
-        let sel2 = s!(y);
+        let sel1 = select!(x);
+        let sel2 = select!(y);
         let or_sel = sel1.clone() | sel2.clone();
         assert!(or_sel[sym!(x)]);
         assert!(or_sel[sym!(y)]);
@@ -491,9 +493,9 @@ mod tests {
 
     #[test]
     fn test_selection_combination() {
-        let sel1 = s!(x) | s!(y);
-        let sel2 = s!(y) | s!(z);
-        let combined_sel = (sel1 & sel2) | s!(w);
+        let sel1 = select!(x) | select!(y);
+        let sel2 = select!(y) | select!(z);
+        let combined_sel = (sel1 & sel2) | select!(w);
         assert!(!combined_sel[sym!(x)]);
         assert!(combined_sel[sym!(y)]);
         assert!(!combined_sel[sym!(z)]);
@@ -502,7 +504,7 @@ mod tests {
 
     #[test]
     fn test_selection_contains() {
-        let sel = s!(x) | s!(y, z);
+        let sel = select!(x) | select!(y, z);
 
         // Test that contains works like index
         let x = sym!(x);
@@ -522,7 +524,7 @@ mod tests {
         assert!(!sel[w]);
 
         // Test with nested selections
-        let nested_sel = s!(c).extend(&[sym!(a), sym!(b)]);
+        let nested_sel = select!(c).extend(&[sym!(a), sym!(b)]);
 
         assert!(nested_sel.contains(&path!(a, b, c)));
         assert!(nested_sel[path!(a, b, c)]);
@@ -537,13 +539,13 @@ mod tests {
 
     #[test]
     fn test_static_sel() {
-        let xy_sel = s!(x, y);
+        let xy_sel = select!(x, y);
         // Test with empty path
         assert!(!xy_sel[path!()]);
         assert!(xy_sel[path!(x, y)]);
         assert!(!xy_sel[path!(other_address)]);
 
-        let nested_true_sel = s!(x).extend(&[sym!(y)]);
+        let nested_true_sel = select!(x).extend(&[sym!(y)]);
         assert!(nested_true_sel[path!(y, x)]);
         assert!(!nested_true_sel[sym!(y)]);
     }
@@ -572,7 +574,7 @@ mod tests {
         assert!(!leaf_extended[path!(x, y, z)]);
 
         // Test extending a specific selection
-        let specific = s!(z);
+        let specific = select!(z);
         let specific_extended = specific.extend(&[sym!(a), sym!(b)]);
         assert!(specific_extended[path!(a, b, z, anything)]);
         assert!(!specific_extended[path!(a, b, w)]);
