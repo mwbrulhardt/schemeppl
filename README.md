@@ -86,6 +86,8 @@ fn main() {
         (define observe-point (lambda (x) (observe (gensym) mix x)))
 
         (for-each observe-point data)
+
+        (list mu1 mu2)
     });
 
     // Define a random-walk proposal using the DSL
@@ -94,8 +96,7 @@ fn main() {
         (sample mu1 (normal current_mu1 step_size))
         (sample mu2 (normal current_mu2 step_size))
 
-        // Return a dummy value (proposals are about the choices, not the return value)
-        #t
+        (list mu1 mu2)
     });
 
     // Initialize trace
@@ -104,16 +105,14 @@ fn main() {
     // Burn In
     for _ in 0..BURN_IN {
         // Get current values to pass to proposal
-        let current_mu1 = trace
-            .get_value(&sym!(mu1))
-            .map(|record| Value::from(record))
-            .unwrap_or(Value::Float(0.0));
-        let current_mu2 = trace
-            .get_value(&sym!(mu2))
-            .map(|record| Value::from(record))
-            .unwrap_or(Value::Float(0.0));
+        let (mu1, mu2) = match trace.get_retval() {
+            Value::List(ref values) if values.len() >= 2 => {
+                (values[0].clone(), values[1].clone())
+            }
+            _ => (Value::Float(0.0), Value::Float(0.0)),
+        };
 
-        let proposal_args = vec![current_mu1, current_mu2, Value::Float(STEP_SIZE)];
+        let proposal_args = vec![mu1, mu2, Value::Float(STEP_SIZE)];
 
         let (new_trace, _accepted) = metropolis_hastings_with_proposal(
             rng.clone(),
@@ -133,16 +132,14 @@ fn main() {
 
     for _ in 0..DRAW {
         // Get current values to pass to proposal
-        let current_mu1 = trace
-            .get_value(&sym!(mu1))
-            .map(|record| Value::from(record))
-            .unwrap_or(Value::Float(0.0));
-        let current_mu2 = trace
-            .get_value(&sym!(mu2))
-            .map(|record| Value::from(record))
-            .unwrap_or(Value::Float(0.0));
+        let (mu1, mu2) = match trace.get_retval() {
+            Value::List(ref values) if values.len() >= 2 => {
+                (values[0].clone(), values[1].clone())
+            }
+            _ => (Value::Float(0.0), Value::Float(0.0)),
+        };
 
-        let proposal_args = vec![current_mu1, current_mu2, Value::Float(STEP_SIZE)];
+        let proposal_args = vec![mu1, mu2, Value::Float(STEP_SIZE)];
 
         let (new_trace, accepted) = metropolis_hastings_with_proposal(
             rng.clone(),

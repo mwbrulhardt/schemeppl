@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use ppl::dsl::Value;
 use ppl::inference::metropolis_hastings_with_proposal;
 use ppl::utils::compute_mean_and_variance;
-use ppl::{r#gen, r#sym, GenerativeFunction, Trace};
+use ppl::{r#gen, GenerativeFunction, Trace};
 
 #[test]
 fn test_gmm_with_dsl_proposal() {
@@ -62,6 +62,8 @@ fn test_gmm_with_dsl_proposal() {
         (define observe-point (lambda (x) (observe (gensym) mix x)))
 
         (for-each observe-point data)
+
+        (list mu1 mu2)
     });
 
     // Define a random-walk proposal using the DSL
@@ -71,8 +73,7 @@ fn test_gmm_with_dsl_proposal() {
         (sample mu1 (normal current_mu1 step_size))
         (sample mu2 (normal current_mu2 step_size))
 
-        // Return a dummy value (proposals are about the choices, not the return value)
-        #t
+        (list mu1 mu2)
     });
 
     let program = model;
@@ -96,17 +97,13 @@ fn test_gmm_with_dsl_proposal() {
 
     // Burn-in
     for _ in 0..BURN_IN {
-        // Get current values to pass to proposal
-        let current_mu1 = trace
-            .get_value(&sym!(mu1))
-            .map(|record| Value::from(record))
-            .unwrap_or(Value::Float(0.0));
-        let current_mu2 = trace
-            .get_value(&sym!(mu2))
-            .map(|record| Value::from(record))
-            .unwrap_or(Value::Float(0.0));
+        // Get current values from the return value instead of individual trace values
+        let (mu1, mu2) = match trace.get_retval() {
+            Value::List(ref values) if values.len() >= 2 => (values[0].clone(), values[1].clone()),
+            _ => (Value::Float(0.0), Value::Float(0.0)),
+        };
 
-        let proposal_args = vec![current_mu1, current_mu2, Value::Float(STEP_SIZE)];
+        let proposal_args = vec![mu1, mu2, Value::Float(STEP_SIZE)];
 
         let (new_trace, _accepted) = metropolis_hastings_with_proposal(
             inference_rng.clone(),
@@ -117,6 +114,7 @@ fn test_gmm_with_dsl_proposal() {
             None,
         )
         .unwrap();
+
         trace = new_trace;
     }
 
@@ -125,21 +123,13 @@ fn test_gmm_with_dsl_proposal() {
 
     // Sampling
     for _ in 0..DRAW {
-        // Get current values to pass to proposal
-        let current_mu1 = trace
-            .get_value(&sym!(mu1))
-            .map(|record| Value::from(record))
-            .unwrap_or(Value::Float(0.0));
-        let current_mu2 = trace
-            .get_value(&sym!(mu2))
-            .map(|record| Value::from(record))
-            .unwrap_or(Value::Float(0.0));
+        // Get current values from the return value instead of individual trace values
+        let (mu1, mu2) = match trace.get_retval() {
+            Value::List(ref values) if values.len() >= 2 => (values[0].clone(), values[1].clone()),
+            _ => (Value::Float(0.0), Value::Float(0.0)),
+        };
 
-        let proposal_args = vec![
-            current_mu1.clone(),
-            current_mu2.clone(),
-            Value::Float(STEP_SIZE),
-        ];
+        let proposal_args = vec![mu1, mu2, Value::Float(STEP_SIZE)];
 
         let (new_trace, accepted) = metropolis_hastings_with_proposal(
             inference_rng.clone(),
@@ -170,9 +160,9 @@ fn test_gmm_with_dsl_proposal() {
 
     let acceptance_rate = num_accepted as f64 / DRAW as f64;
     println!("DSL Proposal - acceptance_rate: {}", acceptance_rate);
-    assert!(acceptance_rate > 0.1 && acceptance_rate < 0.9); // Slightly wider range for DSL version
+    assert!(acceptance_rate > 0.1 && acceptance_rate < 0.9);
 
-    assert!((mean_mu1 - mu1).abs() < 0.6); // Slightly more tolerance
+    assert!((mean_mu1 - mu1).abs() < 0.6);
     assert!(variance_mu1 > 0.0 && variance_mu1 < 2.5);
 
     assert!((mean_mu2 - mu2).abs() < 0.6);
