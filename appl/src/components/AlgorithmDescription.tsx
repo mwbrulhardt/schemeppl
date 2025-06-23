@@ -102,6 +102,8 @@ export default function AlgorithmDescription() {
     (define observe-point (lambda (x) (observe (gensym) mix x)))
 
     (for-each observe-point data)
+
+    (list mu1 mu2)
 }`}
       </pre>
 
@@ -112,7 +114,8 @@ export default function AlgorithmDescription() {
         {`[current_mu1, current_mu2, tau1, tau2] {
     (sample mu1 (normal current_mu1 tau1))
     (sample mu2 (normal current_mu2 tau2))
-    #t
+    
+    (list mu1 mu2)
 }`}
       </pre>
     </div>
