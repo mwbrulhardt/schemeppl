@@ -1,41 +1,35 @@
-use rand::RngCore;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::address::Address;
 use crate::dsl::ast::{Env, Expression, HostFn, Literal, Procedure, Value};
+use crate::dsl::handlers::{ChoiceEvent, ChoiceHandler};
 use crate::dsl::primitives::*;
-use crate::dsl::trace::SchemeDSLTrace;
-use crate::gfi::Trace;
 
 /// Helper function to evaluate a distribution and either sample from it or score a value
-/// This centralizes the common pattern of distribution evaluation used in Sample and Observe expressions
 pub fn eval_distribution(
     distribution_value: Value,
-    value: Option<&Value>, // None = sample, Some(value) = score
-    rng: &mut dyn RngCore,
-) -> Result<(Value, f64), String> {
+    obs: Option<&Value>,
+    address: &Address,
+    handler: &mut dyn ChoiceHandler,
+) -> Result<Value, String> {
     match distribution_value {
         Value::Procedure(Procedure::Stochastic {
             name: dist_name,
             args,
         }) => {
             let args = args.unwrap_or_default();
-            let dist = create_distribution(&dist_name, &args)?;
 
-            match value {
-                None => {
-                    // Sample mode
-                    let sampled_value = dist.sample(rng);
-                    let score = dist.log_prob(&sampled_value)?;
-                    Ok((sampled_value, score))
-                }
-                Some(val) => {
-                    // Score mode
-                    let score = dist.log_prob(val)?;
-                    Ok((val.clone(), score))
-                }
-            }
+            // Create choice event
+            let event = ChoiceEvent {
+                address: address.clone(),
+                dist_name: dist_name.clone(),
+                dist_args: args,
+                obs: obs.cloned(),
+            };
+
+            // Handle the choice
+            Ok(handler.on_choice(&event)?)
         }
         _ => Err("Distribution expression must yield a distribution".to_string()),
     }
@@ -46,8 +40,7 @@ pub fn eval_distribution(
 pub fn eval(
     expr: Expression,
     env: Rc<RefCell<Env>>,
-    trace: &mut SchemeDSLTrace,
-    rng: &mut dyn RngCore,
+    handler: &mut dyn ChoiceHandler,
 ) -> Result<Value, String> {
     match expr {
         // Constants evaluate to their corresponding values
@@ -60,17 +53,9 @@ pub fn eval(
 
         // Variables evaluate to their corresponding values in the environment
         Expression::Variable(name) => {
-            let addr = Address::Symbol(name.clone());
-            if trace.get_choices().contains(&addr) {
-                if let Some(val) = trace.get_choice_value(&addr) {
-                    return Ok(val);
-                }
-            }
-
             if let Some(value) = env.borrow().get(&name) {
                 return Ok(value);
             }
-
             Err(format!("Unbound variable: {}", name))
         }
 
@@ -78,11 +63,11 @@ pub fn eval(
             // Evaluate each expression in the list
             let mut values = Vec::with_capacity(exprs.len());
             for e in &exprs {
-                let val = eval(e.clone(), env.clone(), trace, rng)?;
+                let val = eval(e.clone(), env.clone(), handler)?;
                 values.push(val);
             }
 
-            apply(values[0].clone(), values[1..].to_vec(), trace, rng)
+            apply(values[0].clone(), values[1..].to_vec(), handler)
         }
 
         // Lambda creates closure
@@ -94,10 +79,10 @@ pub fn eval(
 
         // If evaluates the condition and executes the consequent or alternative
         Expression::If(cond, conseq, alt) => {
-            let value = eval(*cond, env.clone(), trace, rng)?;
+            let value = eval(*cond, env.clone(), handler)?;
             match value {
-                Value::Boolean(true) => eval(*conseq, env.clone(), trace, rng),
-                Value::Boolean(false) => eval(*alt, env.clone(), trace, rng),
+                Value::Boolean(true) => eval(*conseq, env.clone(), handler),
+                Value::Boolean(false) => eval(*alt, env.clone(), handler),
                 _ => Err("Condition must be a boolean".to_string()),
             }
         }
@@ -106,7 +91,7 @@ pub fn eval(
         Expression::Define(name, expr) => {
             // Extend env by binding the value of (eval(expr, env)) to name
             // Return the extended env
-            let value = eval(*expr, env.clone(), trace, rng)?;
+            let value = eval(*expr, env.clone(), handler)?;
             env.borrow_mut().set(&name, value.clone());
             Ok(Value::Env(env))
         }
@@ -116,11 +101,11 @@ pub fn eval(
 
         Expression::Sample { distribution, name } => {
             // Evaluate the name and distribution expressions
-            let name = eval(*name, env.clone(), trace, rng)?;
-            let dist = eval(*distribution, env.clone(), trace, rng)?;
+            let name = eval(*name, env.clone(), handler)?;
+            let dist = eval(*distribution, env.clone(), handler)?;
 
             // Get the address of the name
-            let addr = match name {
+            let sym = match name {
                 Value::String(s) => s,
                 Value::Procedure(_) | Value::List(_) | Value::Env(_) | Value::Expr(_) => {
                     return Err("sample: name must evaluate to a string".into())
@@ -128,11 +113,13 @@ pub fn eval(
                 other => format!("{:?}", other),
             };
 
-            // Use the helper function to sample from the distribution
-            let (value, score) = eval_distribution(dist, None, rng)?;
+            // Use the helper function to sample from the distribution with handler
+            let addr = Address::Symbol(sym.clone());
+            let value = eval_distribution(dist, None, &addr, handler)?;
 
-            // Add to trace
-            let _ = trace.add_choice(Address::Symbol(addr), value.clone(), score);
+            // Also bind to environment for consistent variable semantics
+            env.borrow_mut().set(&sym, value.clone());
+
             Ok(value)
         }
 
@@ -142,11 +129,11 @@ pub fn eval(
             observed,
         } => {
             // Evaluate both the distribution and observed value
-            let name = eval(*name, env.clone(), trace, rng)?;
-            let dist = eval(*distribution, env.clone(), trace, rng)?;
-            let value = eval(*observed, env.clone(), trace, rng)?;
+            let name = eval(*name, env.clone(), handler)?;
+            let dist = eval(*distribution, env.clone(), handler)?;
+            let value = eval(*observed, env.clone(), handler)?;
 
-            let addr = match name {
+            let sym = match name {
                 Value::String(s) => s,
                 Value::Procedure(_) | Value::List(_) | Value::Env(_) | Value::Expr(_) => {
                     return Err("observe: name must evaluate to a string".into())
@@ -154,20 +141,22 @@ pub fn eval(
                 other => format!("{:?}", other),
             };
 
-            // Use the helper function to score the observed value
-            let (_, score) = eval_distribution(dist, Some(&value), rng)?;
+            // Use the helper function to score the observed value with handler
+            let addr = Address::Symbol(sym.clone());
+            let value = eval_distribution(dist, Some(&value), &addr, handler)?;
 
-            // Add to trace and return the observed value
-            let _ = trace.add_choice(Address::Symbol(addr), value.clone(), score);
+            // Also bind to environment for consistent variable semantics
+            env.borrow_mut().set(&sym, value.clone());
+
             Ok(value)
         }
 
         Expression::ForEach { func, seq } => {
             // Evaluate the procedure expression once
-            let proc = eval(*func.clone(), env.clone(), trace, rng)?;
+            let proc = eval(*func.clone(), env.clone(), handler)?;
 
             // Evaluate the sequence expression once
-            let seq = eval(*seq.clone(), env.clone(), trace, rng)?;
+            let seq = eval(*seq.clone(), env.clone(), handler)?;
 
             let items = match seq {
                 Value::List(v) => v,
@@ -180,7 +169,7 @@ pub fn eval(
                     Value::List(v) => v,
                     v => vec![v],
                 };
-                apply(proc.clone(), arg, trace, rng)?;
+                apply(proc.clone(), arg, handler)?;
             }
 
             // Return a Scheme-style "unit" – the empty list '()
@@ -192,8 +181,7 @@ pub fn eval(
 pub fn apply(
     func: Value,
     args: Vec<Value>,
-    trace: &mut SchemeDSLTrace,
-    rng: &mut dyn RngCore,
+    handler: &mut dyn ChoiceHandler,
 ) -> Result<Value, String> {
     match func {
         Value::Procedure(Procedure::Deterministic { func }) => func(args),
@@ -222,7 +210,7 @@ pub fn apply(
                 new_env.borrow_mut().set(param, arg);
             }
 
-            eval(*body, new_env, trace, rng)
+            eval(*body, new_env, handler)
         }
 
         other => Err(format!("{:?} is not a function", other)),

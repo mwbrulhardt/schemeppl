@@ -1,20 +1,19 @@
 use num_traits::ToPrimitive;
-use std::fmt::Debug;
 
 use crate::address::Address;
-use crate::gfi::Trace;
+use crate::dsl::trace::SchemeDSLTrace;
 
 /// Compute the mean and variance of a given address in the history
-pub fn compute_mean_and_variance<R, V, T>(history: &Vec<T>, addr: &str) -> (f64, f64)
-where
-    R: Clone + Debug + 'static,
-    V: Clone + Debug + ToPrimitive + 'static,
-    T: Trace<R, V>,
-{
+/// Works specifically with SchemeDSLTrace and returns (mean, variance) for float values
+pub fn compute_mean_and_variance(history: &Vec<SchemeDSLTrace>, addr: &str) -> (f64, f64) {
     let address = Address::Symbol(addr.to_string());
     let values: Vec<f64> = history
         .iter()
-        .filter_map(|t| t.get_value(&address).and_then(|record| record.to_f64()))
+        .filter_map(|trace| {
+            trace
+                .get_choice_value(&address)
+                .and_then(|value| value.to_f64())
+        })
         .collect();
 
     if values.is_empty() {

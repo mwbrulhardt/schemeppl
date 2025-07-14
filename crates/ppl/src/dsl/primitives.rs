@@ -2,10 +2,30 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use num_traits::ToPrimitive;
 use rand::RngCore;
 
 use crate::distributions::{Condition, DistributionExtended, Mixture};
 use crate::dsl::ast::{HostFn, Procedure, Value};
+
+// Helper to convert Value to f64 and track if it was originally a float
+fn get_numeric(val: &Value) -> Result<(f64, bool), String> {
+    match val {
+        Value::Integer(n) => Ok((*n as f64, false)),
+        Value::Float(f) => Ok((*f, true)),
+        _ => Err("Expected numeric (integer or float) arguments".to_string()),
+    }
+}
+
+// Helper to create the final Value based on the result and whether floats were involved
+fn finalize_numeric_result(result: f64, saw_float: bool) -> Value {
+    // If we saw a float OR the result has a fractional part, return Float
+    if saw_float || result.fract() != 0.0 {
+        Value::Float(result)
+    } else {
+        Value::Integer(result as i64)
+    }
+}
 
 /// Make a gensym.
 pub fn make_gensym(args: Vec<Value>) -> Result<Value, String> {
@@ -33,25 +53,7 @@ pub fn make_gensym(args: Vec<Value>) -> Result<Value, String> {
     Ok(Value::Procedure(Procedure::Deterministic { func: closure }))
 }
 
-// Helper to convert Value to f64 and track if it was originally a float
-fn get_numeric(val: &Value) -> Result<(f64, bool), String> {
-    match val {
-        Value::Integer(n) => Ok((*n as f64, false)),
-        Value::Float(f) => Ok((*f, true)),
-        _ => Err("Expected numeric (integer or float) arguments".to_string()),
-    }
-}
-
-// Helper to create the final Value based on the result and whether floats were involved
-fn finalize_numeric_result(result: f64, saw_float: bool) -> Value {
-    // If we saw a float OR the result has a fractional part, return Float
-    if saw_float || result.fract() != 0.0 {
-        Value::Float(result)
-    } else {
-        Value::Integer(result as i64)
-    }
-}
-
+/// Add two or more numeric arguments
 pub fn add(args: Vec<Value>) -> Result<Value, String> {
     args.iter()
         .try_fold((0.0, false), |(acc, saw_float_acc), arg| {
@@ -61,6 +63,7 @@ pub fn add(args: Vec<Value>) -> Result<Value, String> {
         .map(|(sum, saw_float)| finalize_numeric_result(sum, saw_float))
 }
 
+/// Subtract two or more numeric arguments
 pub fn sub(args: Vec<Value>) -> Result<Value, String> {
     if args.is_empty() {
         return Err("- requires at least one argument".to_string());
@@ -83,6 +86,7 @@ pub fn sub(args: Vec<Value>) -> Result<Value, String> {
     Ok(finalize_numeric_result(result, saw_float))
 }
 
+/// Multiply two or more numeric arguments
 pub fn mul(args: Vec<Value>) -> Result<Value, String> {
     args.iter()
         .try_fold((1.0, false), |(acc, saw_float_acc), arg| {
@@ -92,6 +96,7 @@ pub fn mul(args: Vec<Value>) -> Result<Value, String> {
         .map(|(product, saw_float)| finalize_numeric_result(product, saw_float))
 }
 
+/// Divide two or more numeric arguments
 pub fn div(args: Vec<Value>) -> Result<Value, String> {
     if args.is_empty() {
         return Err("/ requires at least one argument".to_string());
@@ -122,15 +127,17 @@ pub fn div(args: Vec<Value>) -> Result<Value, String> {
     Ok(finalize_numeric_result(result, saw_float))
 }
 
+/// Exponentiate a numeric argument
 pub fn exp(args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 1 {
         return Err("exp expects 1 argument".to_string());
     }
 
-    let v = args[0].as_float().ok_or("exp expects a numeric argument")?;
+    let v = args[0].to_f64().ok_or("exp expects a numeric argument")?;
     Ok(Value::Float(v.exp()))
 }
 
+/// Check if two or more arguments are equal
 pub fn eq(args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 2 {
         return Err("= takes exactly two arguments".to_string());
@@ -147,6 +154,7 @@ pub fn eq(args: Vec<Value>) -> Result<Value, String> {
     }
 }
 
+/// Check if one argument is less than another
 pub fn lt(args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 2 {
         return Err("< takes exactly two arguments".to_string());
@@ -163,15 +171,18 @@ pub fn lt(args: Vec<Value>) -> Result<Value, String> {
     }
 }
 
+/// Create a list from a variable number of arguments
 pub fn list(args: Vec<Value>) -> Result<Value, String> {
     return Ok(Value::List(args));
 }
 
+/// Display a list of values
 pub fn display(v: Vec<Value>) -> Result<Value, String> {
     print!("{:?}", v);
     Ok(Value::List(vec![]))
 }
 
+/// Get the first element of a list
 pub fn car(args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 1 {
         return Err("car expects exactly 1 argument".to_string());
@@ -189,6 +200,7 @@ pub fn car(args: Vec<Value>) -> Result<Value, String> {
     }
 }
 
+/// Get the rest of a list
 pub fn cdr(args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 1 {
         return Err("cdr expects exactly 1 argument".to_string());
@@ -206,10 +218,12 @@ pub fn cdr(args: Vec<Value>) -> Result<Value, String> {
     }
 }
 
+/// Parse a list of values into a specific type
 pub trait Parseable: Sized {
     fn parse(args: &[Value]) -> Result<Self, String>;
 }
 
+/// Parse a Bernoulli distribution from a list of values
 impl Parseable for statrs::distribution::Bernoulli {
     fn parse(args: &[Value]) -> Result<Self, String> {
         if args.len() != 1 {
@@ -217,7 +231,7 @@ impl Parseable for statrs::distribution::Bernoulli {
         }
 
         let p = args[0]
-            .as_float()
+            .to_f64()
             .ok_or_else(|| "Bernoulli parameter must be a number".to_string())?;
 
         if p < 0.0 || p > 1.0 {
@@ -232,6 +246,7 @@ impl Parseable for statrs::distribution::Bernoulli {
     }
 }
 
+/// Parse a Condition from a list of values
 impl Parseable for Condition {
     fn parse(args: &[Value]) -> Result<Self, String> {
         if args.len() != 1 {
@@ -246,6 +261,7 @@ impl Parseable for Condition {
     }
 }
 
+/// Parse a Normal distribution from a list of values
 impl Parseable for statrs::distribution::Normal {
     fn parse(args: &[Value]) -> Result<Self, String> {
         if args.len() != 2 {
@@ -253,10 +269,10 @@ impl Parseable for statrs::distribution::Normal {
         }
 
         let mean = args[0]
-            .as_float()
+            .to_f64()
             .ok_or_else(|| "Normal mean must be a number".to_string())?;
         let std_dev = args[1]
-            .as_float()
+            .to_f64()
             .ok_or_else(|| "Normal standard deviation must be a number".to_string())?;
 
         if std_dev <= 0.0 {
@@ -271,6 +287,7 @@ impl Parseable for statrs::distribution::Normal {
     }
 }
 
+/// Parse an Exponential distribution from a list of values
 impl Parseable for statrs::distribution::Exp {
     fn parse(args: &[Value]) -> Result<Self, String> {
         if args.len() != 1 {
@@ -281,7 +298,7 @@ impl Parseable for statrs::distribution::Exp {
         }
 
         let lambda = args[0]
-            .as_float()
+            .to_f64()
             .ok_or_else(|| "Exponential parameter must be a number".to_string())?;
 
         if lambda <= 0.0 {
@@ -296,6 +313,7 @@ impl Parseable for statrs::distribution::Exp {
     }
 }
 
+/// Parse a Mixture distribution from a list of values
 impl Parseable for Mixture<f64> {
     fn parse(args: &[Value]) -> Result<Self, String> {
         // Args: Vec<Stochastic Procedure> Vec<probabilities>
@@ -326,7 +344,7 @@ impl Parseable for Mixture<f64> {
         let mut log_weights = Vec::with_capacity(weight_vals.len());
         for w in weight_vals {
             let wv = w
-                .as_float()
+                .to_f64()
                 .ok_or_else(|| "Mixture weights must be a number".to_string())?;
             if wv <= 0.0 {
                 return Err("mixture: weights must be positive".into());

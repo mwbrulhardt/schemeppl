@@ -96,7 +96,6 @@ export default function AlgorithmDescription() {
     ;; identifiability constraint: add 0 to log-p if ordered, −∞ otherwise
     (constrain (< mu1 mu2))
 
-    (define p 0.5)
     (define mix (mixture (list (normal mu1 1.0) (normal mu2 1.0)) (list p (- 1.0 p))))
 
     (define observe-point (lambda (x) (observe (gensym) mix x)))

@@ -1,8 +1,7 @@
-use rand::distributions::Bernoulli;
 use rand::distributions::Distribution;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-use statrs::distribution::Normal as RandNormal;
+use statrs::distribution::{Bernoulli, Normal};
 use std::sync::{Arc, Mutex};
 
 use ppl::dsl::Value;
@@ -22,19 +21,20 @@ fn test_gmm_with_dsl_proposal() {
     let num_samples = 200;
     let mu1 = -2.0;
     let mu2 = 2.0;
-    let sigma = 1.0;
+    let sigma1 = 1.0;
+    let sigma2 = 1.0;
     let p = 0.5;
     let z_dist = Bernoulli::new(p).unwrap();
     let z: Vec<bool> = (0..num_samples)
         .map(|_| z_dist.sample(&mut *rng.lock().unwrap()))
         .collect();
 
-    let component1 = RandNormal::new(mu1, sigma).unwrap();
+    let component1 = Normal::new(mu1, sigma1).unwrap();
     let c1: Vec<f64> = (0..num_samples)
         .map(|_| component1.sample(&mut *rng.lock().unwrap()))
         .collect();
 
-    let component2 = RandNormal::new(mu2, sigma).unwrap();
+    let component2 = Normal::new(mu2, sigma2).unwrap();
     let c2: Vec<f64> = (0..num_samples)
         .map(|_| component2.sample(&mut *rng.lock().unwrap()))
         .collect();
@@ -47,7 +47,7 @@ fn test_gmm_with_dsl_proposal() {
             .collect(),
     );
 
-    let model = gen!([data] {
+    let model = gen!([data, sigma1, sigma2, p] {
         // Priors
         (sample mu1 (normal 0.0 1.0))
         (sample mu2 (normal 0.0 1.0))
@@ -56,8 +56,7 @@ fn test_gmm_with_dsl_proposal() {
         (constrain (< mu1 mu2))
 
         // Mixture
-        (define p 0.5)
-        (define mix (mixture (list (normal mu1 1.0) (normal mu2 1.0)) (list p (- 1.0 p))))
+        (define mix (mixture (list (normal mu1 sigma1) (normal mu2 sigma2)) (list p (- 1.0 p))))
 
         (define observe-point (lambda (x) (observe (gensym) mix x)))
 
@@ -78,13 +77,19 @@ fn test_gmm_with_dsl_proposal() {
 
     let program = model;
     let proposal_fn = proposal;
-    let inference_rng = Arc::new(Mutex::new(StdRng::seed_from_u64(SEED)));
 
-    let mut trace = program.simulate(inference_rng.clone(), vec![data.clone()]);
+    let args = vec![
+        data.clone(),
+        Value::Float(sigma1),
+        Value::Float(sigma2),
+        Value::Float(p),
+    ];
+
+    let mut trace = program.simulate(rng.clone(), args.clone());
     let mut attempts = 0;
 
     while !trace.get_score().is_finite() && attempts < 1000 {
-        trace = program.simulate(inference_rng.clone(), vec![data.clone()]);
+        trace = program.simulate(rng.clone(), args.clone());
         attempts += 1;
     }
 
@@ -99,14 +104,16 @@ fn test_gmm_with_dsl_proposal() {
     for _ in 0..BURN_IN {
         // Get current values from the return value instead of individual trace values
         let (mu1, mu2) = match trace.get_retval() {
-            Value::List(ref values) if values.len() >= 2 => (values[0].clone(), values[1].clone()),
+            Some(Value::List(ref values)) if values.len() >= 2 => {
+                (values[0].clone(), values[1].clone())
+            }
             _ => (Value::Float(0.0), Value::Float(0.0)),
         };
 
         let proposal_args = vec![mu1, mu2, Value::Float(STEP_SIZE)];
 
         let (new_trace, _accepted) = metropolis_hastings_with_proposal(
-            inference_rng.clone(),
+            rng.clone(),
             trace,
             &proposal_fn,
             proposal_args,
@@ -125,14 +132,16 @@ fn test_gmm_with_dsl_proposal() {
     for _ in 0..DRAW {
         // Get current values from the return value instead of individual trace values
         let (mu1, mu2) = match trace.get_retval() {
-            Value::List(ref values) if values.len() >= 2 => (values[0].clone(), values[1].clone()),
+            Some(Value::List(ref values)) if values.len() >= 2 => {
+                (values[0].clone(), values[1].clone())
+            }
             _ => (Value::Float(0.0), Value::Float(0.0)),
         };
 
         let proposal_args = vec![mu1, mu2, Value::Float(STEP_SIZE)];
 
         let (new_trace, accepted) = metropolis_hastings_with_proposal(
-            inference_rng.clone(),
+            rng.clone(),
             trace,
             &proposal_fn,
             proposal_args,
@@ -153,10 +162,10 @@ fn test_gmm_with_dsl_proposal() {
     let (mean_mu2, variance_mu2) = compute_mean_and_variance(&history, "mu2");
 
     println!("DSL Proposal - mean_mu1: {}", mean_mu1);
-    println!("DSL Proposal - variance_mu1: {}", variance_mu1);
+    println!("DSL Proposal - variance_mu1: {}", variance_mu1.sqrt());
 
     println!("DSL Proposal - mean_mu2: {}", mean_mu2);
-    println!("DSL Proposal - variance_mu2: {}", variance_mu2);
+    println!("DSL Proposal - variance_mu2: {}", variance_mu2.sqrt());
 
     let acceptance_rate = num_accepted as f64 / DRAW as f64;
     println!("DSL Proposal - acceptance_rate: {}", acceptance_rate);

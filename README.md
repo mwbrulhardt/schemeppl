@@ -45,7 +45,7 @@ fn main() {
 
     let p = 0.5;
     let (mu1, mu2) = (-2.0, 2.0);
-    let sigma = 1.0;
+    let (sigma1, sigma2) = (1.0, 1.0);
 
     let z_dist = Bernoulli::new(p).unwrap();
     let z: Vec<bool> = (0..NUM_SAMPLES)
@@ -71,7 +71,7 @@ fn main() {
     );
 
     // Model Specification
-    let model = gen!([data] {
+    let model = gen!([data, sigma1, sigma2, p] {
         // Priors
         (sample mu1 (normal 0.0 1.0))
         (sample mu2 (normal 0.0 1.0))
@@ -80,8 +80,7 @@ fn main() {
         (constrain (< mu1 mu2))
 
         // Mixture
-        (define p 0.5)
-        (define mix (mixture (list (normal mu1 1.0) (normal mu2 1.0)) (list p (- 1.0 p))))
+        (define mix (mixture (list (normal mu1 sigma1) (normal mu2 sigma2)) (list p (- 1.0 p))))
 
         (define observe-point (lambda (x) (observe (gensym) mix x)))
 
@@ -100,7 +99,13 @@ fn main() {
     });
 
     // Initialize trace
-    let mut trace = model.simulate(rng.clone(), vec![data.clone()]);
+    let args = vec![
+        data.clone(),
+        Value::Float(sigma1),
+        Value::Float(sigma2),
+        Value::Float(p),
+    ];
+    let mut trace = model.simulate(rng.clone(), args.clone());
 
     // Burn In
     for _ in 0..BURN_IN {
