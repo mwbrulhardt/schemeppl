@@ -241,7 +241,7 @@ export default function Charts({ state, parameters }: ChartsProps) {
         borderWidth: 2,
         label: {
           display: true,
-          content: `μ₁: ${empiricalMeans.component1.toFixed(2)}`,
+          content: `Empirical μ₁: ${empiricalMeans.component1.toFixed(2)}`,
           position: 'end', // show at top-right of line
           backgroundColor: 'rgba(255, 99, 132, 0.7)',
           color: 'white',
@@ -261,7 +261,7 @@ export default function Charts({ state, parameters }: ChartsProps) {
         borderWidth: 2,
         label: {
           display: true,
-          content: `μ₂: ${empiricalMeans.component2.toFixed(2)}`,
+          content: `Empirical μ₂: ${empiricalMeans.component2.toFixed(2)}`,
           position: 'end',
           backgroundColor: 'rgba(54, 162, 235, 0.7)',
           color: 'white',

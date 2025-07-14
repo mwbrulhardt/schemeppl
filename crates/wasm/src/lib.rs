@@ -3,16 +3,14 @@ use wasm_bindgen::prelude::*;
 
 // Updated imports to use the new API structure
 use ppl::address::{Address, Selection};
-use ppl::choice_map::ChoiceMap;
-use ppl::distributions::DistributionExtended;
 use ppl::dsl::ast::Value;
 use ppl::dsl::parser::parse_string;
 use ppl::dsl::trace::{Record, SchemeDSLTrace, SchemeGenerativeFunction};
 use ppl::dsl::Literal;
 use ppl::gfi::{GenerativeFunction, Trace};
 use ppl::inference::{metropolis_hastings, metropolis_hastings_with_proposal};
+use rand::distributions::Distribution;
 
-//use js_sys::{Object, Reflect};
 use rand::{rngs::StdRng, SeedableRng};
 use statrs::distribution::{Bernoulli, Normal};
 use std::sync::{Arc, Mutex};
@@ -94,50 +92,6 @@ impl JsRng {
 }
 
 #[wasm_bindgen]
-pub fn generate_data(
-    mu1: f64,
-    sigma1: f64,
-    mu2: f64,
-    sigma2: f64,
-    p: f64,
-    n: usize,
-    rng: &JsRng,
-) -> JsValue {
-    let mut rng = rng.inner.lock().unwrap();
-
-    let z_dist = Bernoulli::new(p).unwrap();
-    let z: Vec<bool> = (0..n).map(|_| z_dist.sample_dyn(&mut *rng)).collect();
-
-    let component1 = Normal::new(mu1, sigma1).unwrap();
-    let c1: Vec<f64> = (0..n).map(|_| component1.sample_dyn(&mut *rng)).collect();
-
-    let component2 = Normal::new(mu2, sigma2).unwrap();
-    let c2: Vec<f64> = (0..n).map(|_| component2.sample_dyn(&mut *rng)).collect();
-
-    let data: Vec<f64> = (0..n).map(|i| if z[i] { c1[i] } else { c2[i] }).collect();
-
-    // Convert to numeric values for JavaScript (0 = false, 1 = true)
-    let z_numeric: Vec<u8> = z.iter().map(|&x| if x { 1 } else { 0 }).collect();
-
-    // Create a JavaScript object with data and labels
-    let result = js_sys::Object::new();
-    js_sys::Reflect::set(
-        &result,
-        &JsValue::from_str("data"),
-        &Float64Array::from(&data[..]).into(),
-    )
-    .unwrap();
-    js_sys::Reflect::set(
-        &result,
-        &JsValue::from_str("labels"),
-        &js_sys::Uint8Array::from(&z_numeric[..]).into(),
-    )
-    .unwrap();
-
-    result.into()
-}
-
-#[wasm_bindgen]
 pub struct JsGenerativeFunction {
     inner: SchemeGenerativeFunction,
 }
@@ -185,13 +139,10 @@ impl JsTrace {
     /// Get the numeric value of a choice.
     pub fn get_choice(&self, name: &str) -> f64 {
         let addr = Address::Symbol(name.to_string());
-        if let Some(record) = self.inner.get_value(&addr) {
-            match record {
-                Record::Choice(literal, _) => match literal {
-                    Literal::Float(f) => f,
-                    Literal::Integer(i) => i as f64,
-                    _ => 0.0,
-                },
+        if let Some(value) = self.inner.get_choice_value(&addr) {
+            match value {
+                Value::Float(f) => f,
+                Value::Integer(i) => i as f64,
                 _ => 0.0,
             }
         } else {
@@ -206,9 +157,7 @@ impl JsTrace {
         for (addr, record) in choices.iter() {
             let key = match &addr {
                 Address::Symbol(s) => s.clone(),
-                Address::Path(path) => format!("{:?}", path),
-                Address::Index(_) => format!("index_{:?}", addr),
-                Address::Wildcard => "wildcard".to_string(),
+                Address::Path(path) => path.join("/"),
             };
 
             let value = match record {
@@ -253,12 +202,16 @@ impl JsTrace {
 
     /// Get the return value of the trace
     pub fn get_retval(&self) -> JsValue {
-        match self.inner.get_retval() {
-            Value::Float(f) => JsValue::from_f64(*f),
-            Value::Integer(i) => JsValue::from_f64(*i as f64),
-            Value::Boolean(b) => JsValue::from_bool(*b),
-            Value::String(s) => JsValue::from_str(s),
-            _ => JsValue::NULL,
+        if let Some(retval) = self.inner.get_retval() {
+            match retval {
+                Value::Float(f) => JsValue::from_f64(f),
+                Value::Integer(i) => JsValue::from_f64(i as f64),
+                Value::Boolean(b) => JsValue::from_bool(b),
+                Value::String(s) => JsValue::from_str(&s),
+                _ => JsValue::NULL,
+            }
+        } else {
+            JsValue::NULL
         }
     }
 
@@ -306,9 +259,11 @@ pub fn metropolis_hastings_js(
     // Convert observations if provided
     let observations = observations.map(|obs| obs.inner.get_choices());
 
+    // Use the new method to get the concrete generative function
     let (next, accepted) = metropolis_hastings(
         rng.inner.clone(),
         trace.inner.clone(),
+        trace.inner.get_gen_fn(),
         selection,
         check,
         observations,
@@ -364,4 +319,49 @@ pub fn metropolis_hastings_with_proposal_js(
     result.push(&JsTrace { inner: next }.into());
     result.push(&JsValue::from_bool(accepted));
     Ok(result)
+}
+
+// Keep the existing generate_data function unchanged
+#[wasm_bindgen]
+pub fn generate_data(
+    mu1: f64,
+    sigma1: f64,
+    mu2: f64,
+    sigma2: f64,
+    p: f64,
+    n: usize,
+    rng: &JsRng,
+) -> JsValue {
+    let mut rng = rng.inner.lock().unwrap();
+
+    let z_dist = Bernoulli::new(p).unwrap();
+    let z: Vec<bool> = (0..n).map(|_| z_dist.sample(&mut *rng)).collect();
+
+    let component1 = Normal::new(mu1, sigma1).unwrap();
+    let c1: Vec<f64> = (0..n).map(|_| component1.sample(&mut *rng)).collect();
+
+    let component2 = Normal::new(mu2, sigma2).unwrap();
+    let c2: Vec<f64> = (0..n).map(|_| component2.sample(&mut *rng)).collect();
+
+    let data: Vec<f64> = (0..n).map(|i| if z[i] { c1[i] } else { c2[i] }).collect();
+
+    // Convert to numeric values for JavaScript (0 = false, 1 = true)
+    let z_numeric: Vec<u8> = z.iter().map(|&x| if x { 1 } else { 0 }).collect();
+
+    // Create a JavaScript object with data and labels
+    let result = js_sys::Object::new();
+    js_sys::Reflect::set(
+        &result,
+        &JsValue::from_str("data"),
+        &Float64Array::from(&data[..]).into(),
+    )
+    .unwrap();
+    js_sys::Reflect::set(
+        &result,
+        &JsValue::from_str("labels"),
+        &js_sys::Uint8Array::from(&z_numeric[..]).into(),
+    )
+    .unwrap();
+
+    result.into()
 }

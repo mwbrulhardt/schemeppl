@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fmt::{self, Debug};
+use std::fmt::{self, Debug, Formatter};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -72,7 +72,6 @@ impl Clone for Env {
     fn clone(&self) -> Self {
         Env {
             bindings: RefCell::new(self.bindings.borrow().clone()),
-            // copy current counter value into a *new* atomic
             ctr: AtomicUsize::new(self.ctr.load(Ordering::Relaxed)),
             parent: self.parent.clone(),
         }
@@ -117,7 +116,7 @@ impl Env {
 }
 
 impl Debug for Env {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         // show the symbols that are bound, and whether there is a parent
         let keys: Vec<_> = self.bindings.borrow().keys().cloned().collect();
         f.debug_struct("Env")
@@ -200,42 +199,33 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn expect_float(&self) -> f64 {
-        self.as_float().unwrap()
-    }
-    pub fn expect_int(&self) -> i64 {
-        self.as_int().unwrap()
-    }
-    pub fn expect_bool(&self) -> bool {
-        self.as_bool().unwrap()
-    }
-    pub fn expect_str(&self) -> &str {
-        self.as_str().unwrap()
-    }
-
-    // non‑panicking accessors return Option<…>
-    pub fn as_float(&self) -> Option<f64> {
-        match self {
-            Value::Float(f) => Some(*f),
-            Value::Integer(i) => Some(*i as f64),
-            _ => None,
-        }
-    }
-    pub fn as_int(&self) -> Option<i64> {
-        match self {
-            Value::Integer(i) => Some(*i),
-            _ => None,
-        }
-    }
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Value::Boolean(b) => Some(*b),
             _ => None,
         }
     }
-    pub fn as_str(&self) -> Option<&str> {
+}
+
+impl ToPrimitive for Value {
+    fn to_f64(&self) -> Option<f64> {
         match self {
-            Value::String(s) => Some(s),
+            Value::Float(f) => Some(*f),
+            Value::Integer(i) => Some(*i as f64),
+            _ => None,
+        }
+    }
+
+    fn to_i64(&self) -> Option<i64> {
+        match self {
+            Value::Integer(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    fn to_u64(&self) -> Option<u64> {
+        match self {
+            Value::Integer(i) => Some(*i as u64),
             _ => None,
         }
     }
@@ -264,67 +254,5 @@ impl TryFrom<Value> for Literal {
             Value::String(s) => Ok(Literal::String(s)),
             _ => Err(format!("Cannot convert {:?} to Literal", value)),
         }
-    }
-}
-
-// Convenience conversions for common cases
-impl From<bool> for Literal {
-    fn from(b: bool) -> Self {
-        Literal::Boolean(b)
-    }
-}
-
-impl From<i64> for Literal {
-    fn from(i: i64) -> Self {
-        Literal::Integer(i)
-    }
-}
-
-impl From<f64> for Literal {
-    fn from(f: f64) -> Self {
-        Literal::Float(f)
-    }
-}
-
-impl From<String> for Literal {
-    fn from(s: String) -> Self {
-        Literal::String(s)
-    }
-}
-
-impl From<&str> for Literal {
-    fn from(s: &str) -> Self {
-        Literal::String(s.to_string())
-    }
-}
-
-// Similar convenience conversions for Value
-impl From<bool> for Value {
-    fn from(b: bool) -> Self {
-        Value::Boolean(b)
-    }
-}
-
-impl From<i64> for Value {
-    fn from(i: i64) -> Self {
-        Value::Integer(i)
-    }
-}
-
-impl From<f64> for Value {
-    fn from(f: f64) -> Self {
-        Value::Float(f)
-    }
-}
-
-impl From<String> for Value {
-    fn from(s: String) -> Self {
-        Value::String(s)
-    }
-}
-
-impl From<&str> for Value {
-    fn from(s: &str) -> Self {
-        Value::String(s.to_string())
     }
 }

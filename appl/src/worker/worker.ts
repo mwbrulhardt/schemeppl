@@ -1,4 +1,3 @@
-//import wasmUrl from '@/pkg/wasm_bg.wasm?url';
 import {
   generate_data,
   JsGenerativeFunction,
@@ -224,8 +223,9 @@ self.onmessage = (event) => {
     let result;
     switch (op) {
       case 'generate_data': {
-        // Create a temporary RNG for this operation
-        const tempRng = new JsRng(BigInt(args.seed));
+        if (!rng) {
+          throw new Error('RNG not initialised');
+        }
         result = generate_data(
           args.mu1,
           args.sigma1,
@@ -233,7 +233,7 @@ self.onmessage = (event) => {
           args.sigma2,
           args.p,
           args.n,
-          tempRng
+          rng
         );
         result = {
           data: Array.from(result.data),

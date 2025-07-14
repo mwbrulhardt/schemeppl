@@ -1,172 +1,343 @@
+use crate::address::{Address, Selection};
+use ndarray::ArrayD;
 use rand::rngs::StdRng;
 use std::any::TypeId;
 use std::fmt::Debug;
+use std::ops::Index;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use crate::address::{Address, Selection};
-use crate::choice_map::{ChoiceMap, ChoiceMapQuery};
-
-// Error types
-#[derive(Debug, Clone)]
-pub enum GFIError {
-    NotImplemented(String),
-    InvalidChoice(String),
-    InvalidAddress(String),
-    ZeroProbability,
-}
-
-// Argument difference marker for updates
-#[derive(Debug, Clone)]
-pub enum ArgDiff {
-    NoChange,
-    Changed,
-}
-
-// Return value difference marker
-#[derive(Debug, Clone)]
-pub enum RetDiff {
-    NoChange,
-    Changed,
-}
+pub type Density = ArrayD<f64>;
+pub type Weight = ArrayD<f64>;
+pub type Score = ArrayD<f64>;
 
 /// Abstract trait for a trace of a generative function.
-/// Generic over the choice value type C to allow flexibility in value representation.
-pub trait Trace<R, C>: Debug
+///
+/// A trace captures the execution of a generative function, including its arguments,
+/// return value, choice map, and probability score.
+///
+/// # Type Parameters
+///
+/// * `X` - The choice map type that stores random choices made during execution
+/// * `R` - The return value type
+pub trait Trace<X, R>: Debug
 where
+    X: Clone + Debug + Index<Address> + 'static,
     R: Clone + Debug + 'static,
-    C: Clone + Debug + 'static,
 {
     type Args;
-    type RetDiff;
-    type ChoiceMap: ChoiceMap<C>;
 
-    /// Return the argument tuple for a given execution.
+    /// Returns the arguments used for this execution.
     fn get_args(&self) -> &Self::Args;
 
-    /// Return the return value of the given execution.
-    fn get_retval(&self) -> &R;
+    /// Returns the return value of this execution.
+    fn get_retval(&self) -> R;
 
-    /// Get the choice map for this trace
-    /// Returns owned values to enable on-demand construction and caching
-    fn get_choices(&self) -> Self::ChoiceMap;
-
-    /// Return log(p(r, t; x) / q(r; x, t))
+    /// Returns the choice map for this trace.
     ///
-    /// When there is no non-addressed randomness, this simplifies to the log probability log p(t; x).
+    /// Returns owned values to enable on-demand construction and caching.
+    fn get_choices(&self) -> X;
+
+    /// Returns the log probability score: log(p(r, t; x) / q(r; x, t)).
+    ///
+    /// When there is no non-addressed randomness, this simplifies to log p(t; x).
     fn get_score(&self) -> f64;
 
-    /// Return the generative function that produced the given trace.
-    fn get_gen_fn(&self) -> &dyn GenerativeFunction<R, C, Args = Self::Args, TraceType = Self>;
+    /// Returns the generative function that produced this trace.
+    fn get_gen_fn(&self) -> &dyn GenerativeFunction<X, R, Args = Self::Args, TraceType = Self>;
 
-    /// Get the value of the random choice at address `addr`.
-    fn get_value(&self, addr: &Address) -> Option<C> {
-        self.get_choices().get_value(addr).cloned()
-    }
-
-    /// Estimate the probability that the selected choices take the values they do in a trace.
+    /// Updates this trace with new arguments and choice constraints.
     ///
-    /// Given a trace (x, r, t) and a set of addresses A (selection),
-    /// let u denote the restriction of t to A. Return the weight: log(p(r, t; x) / (q(t; u, x) * q(r; x, t)))
-    fn project(&self, selection: Selection) -> f64;
-
-    /// Update a trace by changing the arguments and/or providing new values for some choices.
+    /// # Arguments
     ///
-    /// Given a previous trace (x, r, t), new arguments x', and a map u (constraints),
-    /// return a new trace (x', r', t') that is consistent with u.
+    /// * `rng` - Random number generator
+    /// * `x` - New choice constraints
+    /// * `args` - New arguments
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (new_trace, weight, discarded_choices) where:
+    /// - `new_trace` - Updated trace
+    /// - `weight` - Importance weight for the update
+    /// - `discarded_choices` - Old choice values that were changed
+    ///
+    /// # Errors
+    ///
+    /// Returns `GFIError` if the update fails due to invalid choices or addresses.
     fn update(
         &self,
         rng: Arc<Mutex<StdRng>>,
+        x: X,
         args: Self::Args,
-        argdiffs: Vec<ArgDiff>,
-        constraints: Self::ChoiceMap,
-    ) -> Result<(Self, f64, Self::RetDiff, Self::ChoiceMap), GFIError>
+    ) -> Result<(Self, Weight, Option<X>), GFIError>
     where
         Self: Sized;
 
-    /// Update a trace by randomly sampling new values for selected random choices.
+    /// Gets a choice value by address.
     ///
-    /// Given a previous trace (x, r, t), new arguments x', and a set of addresses A (selection),
-    /// return a new trace (x', t') such that t' agrees with t on all addresses not in A.
-    fn regenerate(
-        &self,
-        rng: Arc<Mutex<StdRng>>,
-        args: Self::Args,
-        argdiffs: Vec<ArgDiff>,
-        selection: Selection,
-    ) -> Result<(Self, f64, Self::RetDiff), GFIError>
+    /// # Arguments
+    ///
+    /// * `addr` - The address to look up
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let value = trace.get(Address::from("x"));
+    /// ```
+    fn get(&self, addr: Address) -> <X as Index<Address>>::Output
     where
-        Self: Sized;
+        <X as Index<Address>>::Output: Clone,
+    {
+        let choices = self.get_choices();
+        choices[addr].clone()
+    }
+}
+
+/// Errors that can occur during generative function interface operations.
+#[derive(Debug, Clone)]
+pub enum GFIError {
+    /// Operation is not implemented.
+    NotImplemented(String),
+    /// Invalid choice value provided.
+    InvalidChoice(String),
+    /// Invalid address provided.
+    InvalidAddress(String),
+    /// Probability is zero (invalid state).
+    ZeroProbability,
 }
 
 /// Abstract trait for a generative function.
-/// Generic over the choice value type C to allow flexibility in value representation.
 ///
-/// - R is the return value type (RetVal)
-/// - C is the choice value type (ChoiceValue)
-pub trait GenerativeFunction<R, C>: Debug
+/// A generative function defines a probability distribution over execution traces.
+/// It can simulate new traces, generate traces with constraints, and update existing traces.
+///
+/// # Type Parameters
+///
+/// * `X` - The choice map type that stores random choices
+/// * `R` - The return value type
+pub trait GenerativeFunction<X, R>: Debug
 where
+    X: Clone + Debug + Index<Address> + 'static,
     R: Clone + Debug + 'static,
-    C: Clone + Debug + 'static,
 {
     type Args;
-    type TraceType: Trace<R, C> + 'static;
+    type TraceType: Trace<X, R> + 'static;
 
-    /// Get the return value type information
-    /// Equivalent to Julia's get_return_type(::GenerativeFunction{T,U}) where {T,U} = T
+    /// Returns the return value type information.
     fn get_return_type(&self) -> TypeId {
         TypeId::of::<R>()
     }
 
-    /// Get the trace type information  
-    /// Equivalent to Julia's get_trace_type(::GenerativeFunction{T,U}) where {T,U} = U
+    /// Returns the trace type information.
     fn get_trace_type(&self) -> TypeId {
         TypeId::of::<Self::TraceType>()
     }
 
-    /// Execute the generative function and return the trace.
+    /// Executes the generative function and returns a trace.
     ///
-    /// Given arguments, sample (r, t) ~ p(·; x) and return a trace with choice map t.
+    /// Samples (r, t) ~ p(·; x) and returns a trace with choice map t.
+    ///
+    /// # Arguments
+    ///
+    /// * `rng` - Random number generator
+    /// * `args` - Arguments to the generative function
     fn simulate(&self, rng: Arc<Mutex<StdRng>>, args: Self::Args) -> Self::TraceType;
 
-    /// Return a trace of a generative function that is consistent with the given constraints.
+    /// Generates a trace with optional constraints on some choices.
     ///
-    /// Given arguments x and assignment u (constraints), sample t ~ q(·; u, x) and r ~ q(·; x, t),
-    /// and return the trace (x, r, t) and the weight: log(p(r, t; x) / (q(t; u, x) * q(r; x, t)))
+    /// Samples unconstrained choices and computes importance weight for inference.
+    /// When constraints are None, equivalent to simulate() but returns weight=0.
+    ///
+    /// # Arguments
+    ///
+    /// * `rng` - Random number generator
+    /// * `constraints` - Optional constraints on subset of choices
+    /// * `args` - Arguments to the generative function
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (trace, weight) where:
+    /// - `trace` - Contains all choices (constrained + sampled) and return value
+    /// - `weight` - Importance weight: log [P(all_choices; args) / Q(unconstrained_choices; constrained_choices, args)]
+    ///
+    /// # Errors
+    ///
+    /// Returns `GFIError` if generation fails due to invalid constraints.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// // Generate with constraints
+    /// let constraints = Some(choice_map);
+    /// let (trace, weight) = model.generate(rng, constraints, args)?;
+    /// ```
     fn generate(
         &self,
         rng: Arc<Mutex<StdRng>>,
+        constraints: Option<X>,
         args: Self::Args,
-        constraints: <Self::TraceType as Trace<R, C>>::ChoiceMap,
-    ) -> Result<(Self::TraceType, f64), GFIError>;
+    ) -> Result<(Self::TraceType, Weight), GFIError>;
 
-    /// Sample an assignment and compute the probability of proposing that assignment.
+    /// Computes the log probability density of given choices.
     ///
-    /// Given arguments, sample t ~ p(·; x) and r ~ p(·; x, t),
-    /// and return t (choices) and the weight: log(p(r, t; x) / q(r; x, t))
-    fn propose(
-        &self,
-        rng: Arc<Mutex<StdRng>>,
-        args: Self::Args,
-    ) -> Result<(<Self::TraceType as Trace<R, C>>::ChoiceMap, f64, R), GFIError> {
-        let trace = self.simulate(rng, args);
-        let weight = trace.get_score();
-        let choices = trace.get_choices();
-        let retval = trace.get_retval().clone();
-        Ok((choices, weight, retval))
-    }
-
-    /// Return the probability of proposing an assignment.
+    /// Computes log P(choices; args) where P is the generative function's measure kernel.
+    /// Also computes the return value for the given choices.
     ///
-    /// Given arguments x and an assignment t (choices) such that p(t; x) > 0,
-    /// sample r ~ q(·; x, t) and return the weight: log(p(r, t; x) / q(r; x, t))
+    /// # Arguments
+    ///
+    /// * `rng` - Random number generator
+    /// * `args` - Arguments to the generative function
+    /// * `choices` - The choices to evaluate
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (log_density, retval) where:
+    /// - `log_density` - log P(choices; args)
+    /// - `retval` - Return value computed with the given choices
+    ///
+    /// # Errors
+    ///
+    /// Returns `GFIError` if P(choices; args) = 0 (invalid choices).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let (log_density, retval) = model.assess(rng, args, choices)?;
+    /// ```
     fn assess(
         &self,
         rng: Arc<Mutex<StdRng>>,
         args: Self::Args,
-        choices: <Self::TraceType as Trace<R, C>>::ChoiceMap, // Use the trace's choice map type
-    ) -> Result<(f64, R), GFIError> {
-        let (trace, weight) = self.generate(rng, args, choices)?;
+        choices: X,
+    ) -> Result<(Density, R), GFIError> {
+        let (trace, weight) = self.generate(rng, Some(choices), args)?;
         Ok((weight, trace.get_retval().clone()))
     }
+
+    /// Updates a trace with new arguments and/or choice constraints.
+    ///
+    /// Transforms trace from (old_args, old_choices) to (new_args, new_choices)
+    /// and computes incremental importance weight for MCMC and SMC algorithms.
+    ///
+    /// # Arguments
+    ///
+    /// * `rng` - Random number generator
+    /// * `trace` - Current trace to update
+    /// * `constraints` - Optional constraints on choices to enforce during update
+    /// * `args` - New arguments to the generative function
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (new_trace, weight, discarded_choices) where:
+    /// - `new_trace` - Updated trace with new arguments and choices
+    /// - `weight` - Incremental importance weight for the update
+    /// - `discarded_choices` - Old choice values that were changed
+    ///
+    /// # Errors
+    ///
+    /// Returns `GFIError` if the update fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let (new_trace, weight, discarded) = model.update(rng, old_trace, None, new_args)?;
+    /// ```
+    fn update(
+        &self,
+        rng: Arc<Mutex<StdRng>>,
+        trace: Self::TraceType,
+        constraints: Option<X>,
+        args: Self::Args,
+    ) -> Result<(Self::TraceType, Weight, Option<X>), GFIError>
+    where
+        Self: Sized;
+
+    /// Regenerates selected choices in a trace while keeping others fixed.
+    ///
+    /// Resamples choices at addresses selected by 'selection' from their conditional distribution
+    /// and computes incremental importance weight.
+    ///
+    /// # Arguments
+    ///
+    /// * `rng` - Random number generator
+    /// * `trace` - Current trace to regenerate from
+    /// * `selection` - Selection specifying which addresses to regenerate
+    /// * `args` - Arguments to the generative function
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (new_trace, weight, discarded_choices) where:
+    /// - `new_trace` - Trace with selected choices resampled
+    /// - `weight` - Incremental importance weight for the regeneration
+    /// - `discarded_choices` - Old values of the regenerated choices
+    ///
+    /// # Errors
+    ///
+    /// Returns `GFIError` if regeneration fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let selection = Selection::from_addresses(&["x", "y"]);
+    /// let (new_trace, weight, discarded) = model.regenerate(rng, trace, selection, args)?;
+    /// ```
+    fn regenerate(
+        &self,
+        rng: Arc<Mutex<StdRng>>,
+        trace: Self::TraceType,
+        selection: Selection,
+        args: Self::Args,
+    ) -> Result<(Self::TraceType, Weight, Option<X>), GFIError>
+    where
+        Self: Sized;
+
+    /// Merges two choice maps.
+    ///
+    /// Used internally for compositional generative functions where choice maps
+    /// from different components need to be combined. The merge operation resolves
+    /// conflicts by preferring choices from `x_` over `x`.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` - First choice map
+    /// * `x_` - Second choice map (takes precedence in conflicts)
+    /// * `check` - Optional boolean array for conditional selection
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (merged choice map, discarded values) where:
+    /// - `merged` - Combined choices with `x_` values overriding `x` values at conflicts
+    /// - `discarded` - Values from `x` that were overridden by `x_` (None if no conflicts)
+    ///
+    /// # Errors
+    ///
+    /// Returns `GFIError` if the merge operation fails.
+    fn merge(&self, x: X, x_: X, check: Option<ArrayD<f64>>) -> Result<(X, Option<X>), GFIError>
+    where
+        X: Clone + Debug + Index<Address> + 'static,
+        Self: Sized;
+
+    /// Filters choice map into selected and unselected parts.
+    ///
+    /// Partitions choices based on a selection, enabling fine-grained manipulation
+    /// of subsets of choices in inference algorithms.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` - Choice map to filter
+    /// * `selection` - Selection specifying which addresses to include
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (selected_choices, unselected_choices) where:
+    /// - `selected_choices` - Choice map containing only selected addresses (None if no matches)
+    /// - `unselected_choices` - Choice map containing only unselected addresses (None if no matches)
+    ///
+    /// # Errors
+    ///
+    /// Returns `GFIError` if the filter operation fails.
+    fn filter(&self, x: X, selection: Selection) -> Result<(Option<X>, Option<X>), GFIError>
+    where
+        X: Clone + Debug + Index<Address> + 'static,
+        Self: Sized;
 }

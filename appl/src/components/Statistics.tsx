@@ -1,6 +1,6 @@
 import { SimulationState } from '@/hooks/useSimulator';
 import React from 'react';
-import { calculateStdDev } from '@/utils/stats';
+import { calculateMean, calculateStdDev } from '@/utils/stats';
 import 'katex/dist/katex.min.css';
 import { InlineMath } from 'react-katex';
 
@@ -16,8 +16,8 @@ const Statistics: React.FC<StatisticsProps> = ({ state }) => {
 
   const hasStarted = Boolean(state && state.steps.length > 0);
 
-  const mu1Value = hasStarted ? state!.mu1 : 0;
-  const mu2Value = hasStarted ? state!.mu2 : 0;
+  const mu1Value = hasStarted ? calculateMean(state!.samples.mu1) : 0;
+  const mu2Value = hasStarted ? calculateMean(state!.samples.mu2) : 0;
 
   const mu1StdDev = hasStarted ? calculateStdDev(state!.samples.mu1) : 0;
   const mu2StdDev = hasStarted ? calculateStdDev(state!.samples.mu2) : 0;
