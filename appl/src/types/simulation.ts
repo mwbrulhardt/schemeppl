@@ -4,8 +4,8 @@ export interface Parameters {
   sigma1: number;
   sigma2: number;
   p: number;
-  proposalStdDev1: number;
-  proposalStdDev2: number;
+  tau1: number;
+  tau2: number;
   numSteps: number;
   burnIn: number;
   delay: number;

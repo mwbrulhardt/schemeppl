@@ -258,7 +258,7 @@ impl Trace<SchemeChoiceMap, Option<Value>> for SchemeDSLTrace {
         rng: Arc<Mutex<StdRng>>,
         x: SchemeChoiceMap,
         args: Self::Args,
-    ) -> Result<(Self, Weight, Option<SchemeChoiceMap>), GFIError>
+    ) -> Result<(Self, Weight, SchemeChoiceMap), GFIError>
     where
         Self: Sized,
     {
@@ -311,7 +311,7 @@ impl GenerativeFunction<SchemeChoiceMap, Option<Value>> for SchemeGenerativeFunc
         trace: Self::TraceType,
         constraints: Option<SchemeChoiceMap>,
         args: Self::Args,
-    ) -> Result<(Self::TraceType, Weight, Option<SchemeChoiceMap>), GFIError>
+    ) -> Result<(Self::TraceType, Weight, SchemeChoiceMap), GFIError>
     where
         Self: Sized,
     {
@@ -336,7 +336,7 @@ impl GenerativeFunction<SchemeChoiceMap, Option<Value>> for SchemeGenerativeFunc
         }
 
         let weight = ndarray::Array::from_elem(ndarray::IxDyn(&[]), handler.weight);
-        Ok((handler.trace, weight, Some(handler.discarded)))
+        Ok((handler.trace, weight, handler.discarded))
     }
 
     fn regenerate(
@@ -457,6 +457,20 @@ impl From<Record> for Value {
             Record::Call(_, _) => Value::String("call".to_string()),
         }
     }
+}
+
+pub fn make_extract_args(
+    names: Vec<Address>,
+) -> Box<dyn Fn(&Vec<Value>, &SchemeDSLTrace) -> Result<Vec<Value>, String>> {
+    Box::new(move |args: &Vec<Value>, trace: &SchemeDSLTrace| {
+        let mut selected_args = args.clone();
+        for addr in &names {
+            if let Some(record) = trace.get_choices().get(addr) {
+                selected_args.push(record.clone().into());
+            }
+        }
+        Ok(selected_args)
+    })
 }
 
 #[cfg(test)]
@@ -783,13 +797,11 @@ mod tests {
         }
 
         // Test 3: Discard should contain old values that were overwritten
-        if let Some(ref discard) = discard {
-            let has_old_x = discard.iter().any(|(addr, record)| {
-                matches!(addr, Address::Symbol(s) if s == "x")
-                    && matches!(record, Record::Choice(Literal::Float(val), _) if val == &10.0)
-            });
-            assert!(has_old_x, "Discard should contain the old value of x");
-        }
+        let has_old_x = discard.iter().any(|(addr, record)| {
+            matches!(addr, Address::Symbol(s) if s == "x")
+                && matches!(record, Record::Choice(Literal::Float(val), _) if *val == 10.0)
+        });
+        assert!(has_old_x, "Discard should contain the old value of x");
 
         // Test 5: Arguments should be preserved
         assert_eq!(new_trace.get_args(), &args);

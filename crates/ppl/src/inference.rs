@@ -13,6 +13,10 @@ use rand::{rngs::StdRng, Rng};
 use crate::address::{Address, Selection};
 use crate::gfi::{Density, GenerativeFunction, Trace};
 
+/// A function type that takes in some partial arguments, and a trace, 
+/// and returns the full arguments that can be used to input into a proposal function.
+pub type ExtractArgs<Args, T> = Box<dyn Fn(&Args, &T) -> Result<Args, String>>;
+
 /// Check that observed choices in the new trace match the expected observations
 fn check_observations<X>(_choices: &X, _observations: &X) -> Result<(), String>
 where
@@ -20,6 +24,8 @@ where
 {
     // For now, skip detailed checking since this is just a placeholder
     // In a full implementation, this would check that all observed values match
+    // TODO: Augment the definition of an abstract choice map such that this check is possible 
+    //       without importing SchemeChoiceMap
     Ok(())
 }
 
@@ -29,8 +35,8 @@ pub fn metropolis_hastings<X, R, T, G>(
     trace: T,
     gen_fn: &G,
     selection: Selection,
-    check: Option<bool>,
-    observations: Option<X>,
+    check: bool,
+    observations: X,
 ) -> Result<(T, bool), String>
 where
     X: Clone + Debug + Index<Address> + 'static,
@@ -39,31 +45,22 @@ where
     T::Args: Clone,
     G: GenerativeFunction<X, R, TraceType = T, Args = T::Args>,
 {
-    let check = check.unwrap_or(false);
-    let observations = observations.unwrap_or_else(|| {
-        // Create an empty choice map - this depends on the specific implementation
-        // For now, we'll skip this and handle it in the check
-        panic!("Need to provide observations or implement default choice map creation")
-    });
-
     let model_args = trace.get_args().clone();
 
     let (new_trace, weight, _) = gen_fn
         .regenerate(rng.clone(), trace.clone(), selection, model_args)
         .map_err(|e| format!("Regenerate failed: {:?}", e))?;
 
-    let log_alpha = weight.iter().sum::<f64>(); // Sum the weight array
-
     if check {
         let new_choices = new_trace.get_choices();
         check_observations(&new_choices, &observations)?;
     }
 
-    // Accept with probability exp(log_alpha)
-    let mut rng_guard = rng.lock().unwrap();
-    let u: f64 = rng_guard.gen();
+    // Acceptance criterion
+    let u: f64 = rng.lock().unwrap().gen();
+    let alpha = weight.iter().sum::<f64>();
 
-    if u < log_alpha.exp() {
+    if u < alpha.exp() {
         Ok((new_trace, true))
     } else {
         Ok((trace, false))
@@ -76,8 +73,9 @@ pub fn metropolis_hastings_with_proposal<X, R, T, G>(
     trace: T,
     proposal: &G,
     proposal_args: G::Args,
+    extract_args: &ExtractArgs<G::Args, T>,
     check: bool,
-    observations: Option<X>,
+    observations: X,
 ) -> Result<(T, bool), String>
 where
     X: Clone + Debug + Index<Address> + 'static,
@@ -85,51 +83,39 @@ where
     T: Trace<X, R> + Clone,
     T::Args: Clone,
     G: GenerativeFunction<X, R, TraceType = T>,
-    G::Args: Clone,
+    G::Args: Clone + Debug,
 {
     let model_args = trace.get_args().clone();
 
-    // Forward proposal - generate constraints using the proposal function
-    let (proposal_trace, fwd_weight_array) = proposal
-        .generate(rng.clone(), None, proposal_args.clone())
+    // Forward proposal - propose new choices and get the proposal density
+    let proposal_args_forward = extract_args(&proposal_args, &trace)?;
+    let (fwd_choices, fwd_weight_array, _marker) = proposal
+        .propose(rng.clone(), proposal_args_forward.clone())
         .map_err(|e| format!("Forward proposal failed: {:?}", e))?;
-
-    let fwd_choices = proposal_trace.get_choices();
     let fwd_weight = fwd_weight_array.iter().sum::<f64>();
 
     // Update the trace with the proposed choices
-    let (new_trace, update_weight, discard) = trace
+    let (new_trace, weight_array, discard) = trace
         .update(rng.clone(), fwd_choices, model_args)
         .map_err(|e| format!("Update failed: {:?}", e))?;
-
-    let update_weight_sum = update_weight.iter().sum::<f64>();
+    let weight = weight_array.iter().sum::<f64>();
 
     // Backward proposal - assess the discarded choices
-    let (bwd_density, _retval): (Density, R) = if let Some(discarded) = discard {
-        proposal
-            .assess(rng.clone(), proposal_args, discarded)
-            .map_err(|e| format!("Backward proposal failed: {:?}", e))?
-    } else {
-        // No choices were discarded, so backward probability is 1 (log prob = 0)
-        let empty_density = ndarray::Array::from_elem(ndarray::IxDyn(&[]), 0.0);
-        let retval = proposal_trace.get_retval();
-        (empty_density, retval)
-    };
-
+    let proposal_args_backward = extract_args(&proposal_args, &new_trace)?;
+    let (bwd_density, _retval): (Density, R) = proposal
+        .assess(rng.clone(), proposal_args_backward, discard)
+        .map_err(|e| format!("Backward proposal failed: {:?}", e))?;
     let bwd_weight = bwd_density.iter().sum::<f64>();
 
-    let log_alpha = update_weight_sum - fwd_weight + bwd_weight;
-
     if check {
-        if let Some(ref obs) = observations {
-            check_observations(&new_trace.get_choices(), obs)?;
-        }
+        check_observations(&new_trace.get_choices(), &observations)?;
     }
 
-    // Metropolis-Hastings acceptance criterion
+    // Acceptance criterion
     let u: f64 = rng.lock().unwrap().gen();
+    let alpha = weight - fwd_weight + bwd_weight;
 
-    if u < log_alpha.exp() {
+    if u < alpha.exp() {
         Ok((new_trace, true))
     } else {
         Ok((trace.clone(), false))

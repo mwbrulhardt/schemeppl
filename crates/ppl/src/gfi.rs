@@ -69,7 +69,7 @@ where
         rng: Arc<Mutex<StdRng>>,
         x: X,
         args: Self::Args,
-    ) -> Result<(Self, Weight, Option<X>), GFIError>
+    ) -> Result<(Self, Weight, X), GFIError>
     where
         Self: Sized;
 
@@ -248,7 +248,7 @@ where
         trace: Self::TraceType,
         constraints: Option<X>,
         args: Self::Args,
-    ) -> Result<(Self::TraceType, Weight, Option<X>), GFIError>
+    ) -> Result<(Self::TraceType, Weight, X), GFIError>
     where
         Self: Sized;
 
@@ -290,6 +290,39 @@ where
     ) -> Result<(Self::TraceType, Weight, Option<X>), GFIError>
     where
         Self: Sized;
+
+    /// Sample an assignment and compute the probability of proposing that assignment.
+    ///
+    /// # Arguments
+    ///
+    /// * `rng` - Random number generator
+    /// * `args` - Arguments to the generative function
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (choices, density, retval) where:
+    /// - `choices` - The sampled choice map
+    /// - `density` - Log probability density: log P(choices; args)  
+    /// - `retval` - Return value computed with the sampled choices
+    ///
+    /// # Errors
+    ///
+    /// Returns `GFIError` if the proposal fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let (choices, log_density, retval) = proposal.propose(rng, args)?;
+    /// ```
+    fn propose(
+        &self,
+        rng: Arc<Mutex<StdRng>>,
+        args: Self::Args,
+    ) -> Result<(X, Density, R), GFIError> {
+        let trace = self.simulate(rng, args);
+        let weight = ndarray::Array::from_elem(ndarray::IxDyn(&[]), trace.get_score());
+        Ok((trace.get_choices(), weight, trace.get_retval()))
+    }
 
     /// Merges two choice maps.
     ///

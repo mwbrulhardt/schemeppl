@@ -10,14 +10,14 @@ import { Parameters } from '@/types/simulation';
 
 /* ------------------------------------------------------------------ */
 let algorithm: JsGenerativeFunction | null = null;
-let proposalFunction: JsGenerativeFunction | null = null;
+let proposal: JsGenerativeFunction | null = null;
 let trace: JsTrace | null = null;
 let rng: JsRng | null = null;
 let datasetCache: { data: Float64Array; labels: Uint8Array } | null = null;
 
 // Store proposal step sizes globally
-let proposalStepSize1 = 0.15;
-let proposalStepSize2 = 0.15;
+let tau1 = 0.15;
+let tau2 = 0.15;
 
 /* -------------------- streaming control ------------------------------ */
 let running = false;
@@ -54,7 +54,7 @@ function ensureInitialized(params: Parameters) {
 }
 
 function pushBatch() {
-  if (!running || !algorithm || !trace || !rng || !proposalFunction) return;
+  if (!running || !algorithm || !trace || !rng || !proposal) return;
 
   const steps: Array<{ mu1: number; mu2: number; accepted: boolean }> = [];
   let numAccepted = 0;
@@ -108,9 +108,8 @@ function buildModel(p: Parameters) {
 
 function buildProposal() {
   return `(
-    (sample mu1 (normal current_mu1 step_size1))
-    (sample mu2 (normal current_mu2 step_size2))
-    #t
+    (sample mu1 (normal mu1 tau1))
+    (sample mu2 (normal mu2 tau2))
   )`;
 }
 
@@ -119,8 +118,8 @@ function initialize(params: Parameters) {
   rng = new JsRng(BigInt(params.seed));
 
   // Store proposal step sizes
-  proposalStepSize1 = params.proposalStdDev1;
-  proposalStepSize2 = params.proposalStdDev2;
+  tau1 = params.tau1;
+  tau2 = params.tau2;
 
   // Generate dataset & cache
   const generated = generate_data(
@@ -139,15 +138,14 @@ function initialize(params: Parameters) {
   };
 
   const model = buildModel(params);
-  const proposal = buildProposal();
 
   // Create the main generative function
   algorithm = new JsGenerativeFunction(['data'], model);
 
   // Create the proposal function
-  proposalFunction = new JsGenerativeFunction(
-    ['current_mu1', 'current_mu2', 'step_size1', 'step_size2'],
-    proposal
+  proposal = new JsGenerativeFunction(
+    ['tau1', 'tau2', 'mu1', 'mu2'],
+    buildProposal()
   );
 
   let data = new Float64Array(datasetCache.data);
@@ -180,29 +178,19 @@ function initialize(params: Parameters) {
 }
 
 function step() {
-  if (!algorithm || !trace || !rng || !proposalFunction)
+  if (!algorithm || !trace || !rng || !proposal)
     throw new Error('Simulation not initialised');
 
-  // Get current values from the trace
-  const currentMu1 = trace.get_choice('mu1');
-  const currentMu2 = trace.get_choice('mu2');
-
-  // Use stored step sizes
-  const stepSize1 = proposalStepSize1;
-  const stepSize2 = proposalStepSize2;
-
-  // Create proposal arguments
-  const proposalArgs = [currentMu1, currentMu2, stepSize1, stepSize2];
-  const proposalArgsArray = new Array(proposalArgs.length);
-  for (let i = 0; i < proposalArgs.length; i++) {
-    proposalArgsArray[i] = proposalArgs[i];
-  }
+  const proposalArgs = new Array(2);
+  proposalArgs[0] = tau1;
+  proposalArgs[1] = tau2;
 
   const result = metropolis_hastings_with_proposal_js(
     rng,
     trace,
-    proposalFunction,
-    proposalArgsArray,
+    proposal,
+    proposalArgs,
+    ['mu1', 'mu2'],
     false, // check
     null // observations
   );
