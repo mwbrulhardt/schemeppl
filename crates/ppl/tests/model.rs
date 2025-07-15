@@ -65,8 +65,8 @@ fn test_univariate_gaussian_no_parse() {
             trace,
             &program,
             selection.clone(),
-            Some(false),
-            Some(empty_observations.clone()),
+            false,
+            empty_observations.clone(),
         )
         .unwrap();
         trace = t;
@@ -79,8 +79,8 @@ fn test_univariate_gaussian_no_parse() {
             trace,
             &program,
             selection.clone(),
-            Some(false),
-            Some(empty_observations.clone()),
+            false,
+            empty_observations.clone(),
         )
         .unwrap();
         trace = t;
@@ -219,8 +219,8 @@ fn test_gmm_no_parse() {
             trace,
             &program,
             selection.clone(),
-            Some(false),
-            Some(empty_observations.clone()),
+            false,
+            empty_observations.clone(),
         )
         .unwrap();
         trace = t;
@@ -233,8 +233,8 @@ fn test_gmm_no_parse() {
             trace,
             &program,
             selection.clone(),
-            Some(false),
-            Some(empty_observations.clone()),
+            false,
+            empty_observations.clone(),
         )
         .unwrap();
         trace = t;
@@ -319,8 +319,8 @@ fn test_gmm_parse() {
             trace,
             &model,
             selection.clone(),
-            Some(false),
-            Some(empty_observations.clone()),
+            false,
+            empty_observations.clone(),
         )
         .unwrap();
         trace = t;
@@ -335,8 +335,8 @@ fn test_gmm_parse() {
             trace,
             &model,
             selection.clone(),
-            Some(false),
-            Some(empty_observations.clone()),
+            false,
+            empty_observations.clone(),
         )
         .unwrap();
         trace = t;

@@ -11,8 +11,8 @@ const PARAMETER_CONSTRAINTS = {
   sigma1: { min: 0.1, max: Infinity },
   sigma2: { min: 0.1, max: Infinity },
   p: { min: 0.01, max: 0.99 },
-  proposalStdDev1: { min: 0.1, max: Infinity },
-  proposalStdDev2: { min: 0.1, max: Infinity },
+  tau1: { min: 0.1, max: Infinity },
+  tau2: { min: 0.1, max: Infinity },
   numSteps: { min: 100, max: 10000 },
   burnIn: { min: 0, max: 2000 },
   delay: { min: 0, max: 1000 },
@@ -48,8 +48,8 @@ export default function Controls({
     sigma1: parameters.sigma1.toString(),
     sigma2: parameters.sigma2.toString(),
     p: parameters.p.toString(),
-    proposalStdDev1: parameters.proposalStdDev1.toString(),
-    proposalStdDev2: parameters.proposalStdDev1.toString(),
+    tau1: parameters.tau1.toString(),
+    tau2: parameters.tau2.toString(),
     numSteps: parameters.numSteps.toString(),
     burnIn: parameters.burnIn.toString(),
     delay: parameters.delay.toString(),
@@ -64,8 +64,8 @@ export default function Controls({
     sigma1: true,
     sigma2: true,
     p: true,
-    proposalStdDev1: true,
-    proposalStdDev2: true,
+    tau1: true,
+    tau2: true,
     numSteps: true,
     burnIn: true,
     delay: true,
@@ -86,12 +86,10 @@ export default function Controls({
         !isNaN(Number(v)) &&
         Number(v) >= PARAMETER_CONSTRAINTS.p.min &&
         Number(v) <= PARAMETER_CONSTRAINTS.p.max,
-      proposalStdDev1: (v: string) =>
-        !isNaN(Number(v)) &&
-        Number(v) >= PARAMETER_CONSTRAINTS.proposalStdDev1.min,
-      proposalStdDev2: (v: string) =>
-        !isNaN(Number(v)) &&
-        Number(v) >= PARAMETER_CONSTRAINTS.proposalStdDev2.min,
+      tau1: (v: string) =>
+        !isNaN(Number(v)) && Number(v) >= PARAMETER_CONSTRAINTS.tau1.min,
+      tau2: (v: string) =>
+        !isNaN(Number(v)) && Number(v) >= PARAMETER_CONSTRAINTS.tau2.min,
       numSteps: (v: string) =>
         !isNaN(Number(v)) &&
         Number(v) >= PARAMETER_CONSTRAINTS.numSteps.min &&
@@ -122,8 +120,8 @@ export default function Controls({
       sigma1: parameters.sigma1.toString(),
       sigma2: parameters.sigma2.toString(),
       p: parameters.p.toString(),
-      proposalStdDev1: parameters.proposalStdDev1.toString(),
-      proposalStdDev2: parameters.proposalStdDev2.toString(),
+      tau1: parameters.tau1.toString(),
+      tau2: parameters.tau2.toString(),
       numSteps: parameters.numSteps.toString(),
       burnIn: parameters.burnIn.toString(),
       delay: parameters.delay.toString(),
@@ -136,8 +134,8 @@ export default function Controls({
       sigma1: true,
       sigma2: true,
       p: true,
-      proposalStdDev1: true,
-      proposalStdDev2: true,
+      tau1: true,
+      tau2: true,
       numSteps: true,
       burnIn: true,
       delay: true,
@@ -320,13 +318,13 @@ export default function Controls({
                   {renderKaTeXLabel('\\tau_1')}
                   <input
                     type="number"
-                    value={inputValues.proposalStdDev1}
+                    value={inputValues.tau1}
                     onChange={(e) =>
-                      handleParameterChange('proposalStdDev1', e.target.value)
+                      handleParameterChange('tau1', e.target.value)
                     }
-                    min={PARAMETER_CONSTRAINTS.proposalStdDev1.min}
+                    min={PARAMETER_CONSTRAINTS.tau1.min}
                     step="0.1"
-                    className={getInputClass('proposalStdDev1')}
+                    className={getInputClass('tau1')}
                     disabled={isRunning}
                   />
                 </div>
@@ -372,13 +370,13 @@ export default function Controls({
                   {renderKaTeXLabel('\\tau_2')}
                   <input
                     type="number"
-                    value={inputValues.proposalStdDev2}
+                    value={inputValues.tau2}
                     onChange={(e) =>
-                      handleParameterChange('proposalStdDev2', e.target.value)
+                      handleParameterChange('tau2', e.target.value)
                     }
-                    min={PARAMETER_CONSTRAINTS.proposalStdDev2.min}
+                    min={PARAMETER_CONSTRAINTS.tau2.min}
                     step="0.1"
-                    className={getInputClass('proposalStdDev2')}
+                    className={getInputClass('tau2')}
                     disabled={isRunning}
                   />
                 </div>

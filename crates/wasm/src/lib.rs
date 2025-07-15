@@ -1,16 +1,16 @@
 use js_sys::Float64Array;
 use wasm_bindgen::prelude::*;
 
-// Updated imports to use the new API structure
 use ppl::address::{Address, Selection};
 use ppl::dsl::ast::Value;
 use ppl::dsl::parser::parse_string;
-use ppl::dsl::trace::{Record, SchemeDSLTrace, SchemeGenerativeFunction};
+use ppl::dsl::trace::{Record, SchemeDSLTrace, SchemeGenerativeFunction, SchemeChoiceMap};
 use ppl::dsl::Literal;
 use ppl::gfi::{GenerativeFunction, Trace};
 use ppl::inference::{metropolis_hastings, metropolis_hastings_with_proposal};
 use rand::distributions::Distribution;
 
+use ppl::dsl::trace::make_extract_args;
 use rand::{rngs::StdRng, SeedableRng};
 use statrs::distribution::{Bernoulli, Normal};
 use std::sync::{Arc, Mutex};
@@ -244,7 +244,7 @@ pub fn metropolis_hastings_js(
     rng: &JsRng,
     trace: &JsTrace,
     selection: &js_sys::Array,
-    check: Option<bool>,
+    check: bool,
     observations: Option<JsTrace>,
 ) -> Result<js_sys::Array, JsValue> {
     let sel_strings: Vec<String> = selection.iter().filter_map(|v| v.as_string()).collect();
@@ -257,7 +257,11 @@ pub fn metropolis_hastings_js(
     };
 
     // Convert observations if provided
-    let observations = observations.map(|obs| obs.inner.get_choices());
+    let observations = if let Some(obs) = observations {
+        obs.inner.get_choices()
+    } else {
+        SchemeChoiceMap::new()
+    };
 
     // Use the new method to get the concrete generative function
     let (next, accepted) = metropolis_hastings(
@@ -283,6 +287,7 @@ pub fn metropolis_hastings_with_proposal_js(
     trace: &JsTrace,
     proposal: &JsGenerativeFunction,
     proposal_args: &js_sys::Array,
+    names: &js_sys::Array,
     check: bool,
     observations: Option<JsTrace>,
 ) -> Result<js_sys::Array, JsValue> {
@@ -305,11 +310,31 @@ pub fn metropolis_hastings_with_proposal_js(
     // Convert observations if provided
     let observations = observations.map(|obs| obs.inner.get_choices());
 
+    let names: Vec<Address> = names
+        .iter()
+        .filter_map(|v| {
+            if let Some(name) = v.as_string() {
+                Some(Address::Symbol(name.to_string()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let extract_args = make_extract_args(names);
+
+    let observations = if let Some(obs) = observations {
+        obs
+    } else {
+        SchemeChoiceMap::new()
+    };
+
     let (next, accepted) = metropolis_hastings_with_proposal(
         rng.inner.clone(),
         trace.inner.clone(),
         &proposal.inner,
         proposal_args,
+        &extract_args,
         check,
         observations,
     )

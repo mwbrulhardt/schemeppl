@@ -290,6 +290,14 @@ pub fn standard_env() -> Rc<RefCell<Env>> {
         Value::Procedure(Procedure::Deterministic { func: wrap(cdr) }),
     );
 
+    env.borrow_mut().set(
+        "bernoulli",
+        Value::Procedure(Procedure::Stochastic {
+            name: "bernoulli".to_string(),
+            args: None,
+        }),
+    );
+
     // Distribution Primitives
     env.borrow_mut().set(
         "normal",

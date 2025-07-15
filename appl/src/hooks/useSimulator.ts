@@ -40,8 +40,8 @@ export function useSimulator() {
     sigma1: 1,
     sigma2: 1,
     p: 0.5,
-    proposalStdDev1: 0.15,
-    proposalStdDev2: 0.15,
+    tau1: 0.15,
+    tau2: 0.15,
     numSteps: 1_000,
     burnIn: 100,
     delay: 100,
@@ -255,8 +255,8 @@ export function useSimulator() {
           'sigma2' in delta ||
           'p' in delta ||
           'seed' in delta ||
-          'proposalStdDev1' in delta ||
-          'proposalStdDev2' in delta ||
+          'tau1' in delta ||
+          'tau2' in delta ||
           'sampleSize' in delta;
 
         // Changing just the delay does not require a full re-initialisation,
