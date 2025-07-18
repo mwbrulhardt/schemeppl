@@ -13,7 +13,7 @@ use rand::{rngs::StdRng, Rng};
 use crate::address::{Address, Selection};
 use crate::gfi::{Density, GenerativeFunction, Trace};
 
-/// A function type that takes in some partial arguments, and a trace, 
+/// A function type that takes in some partial arguments, and a trace,
 /// and returns the full arguments that can be used to input into a proposal function.
 pub type ExtractArgs<Args, T> = Box<dyn Fn(&Args, &T) -> Result<Args, String>>;
 
@@ -24,7 +24,7 @@ where
 {
     // For now, skip detailed checking since this is just a placeholder
     // In a full implementation, this would check that all observed values match
-    // TODO: Augment the definition of an abstract choice map such that this check is possible 
+    // TODO: Augment the definition of an abstract choice map such that this check is possible
     //       without importing SchemeChoiceMap
     Ok(())
 }

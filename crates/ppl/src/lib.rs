@@ -1,6 +1,7 @@
 pub mod address;
 pub mod distributions;
 pub mod dsl;
+pub mod dynamic;
 pub mod gfi;
 pub mod inference;
 

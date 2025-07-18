@@ -5,13 +5,13 @@ use statrs::distribution::{Bernoulli, Normal};
 use std::sync::{Arc, Mutex};
 
 use ppl::address::Address;
-use ppl::dsl::trace::make_extract_args;
 use ppl::dsl::Value;
+use ppl::dynamic::trace::make_extract_args;
+use ppl::dynamic::trace::SchemeChoiceMap;
+use ppl::dynamic::trace::SchemeGenerativeFunction;
 use ppl::inference::metropolis_hastings_with_proposal;
 use ppl::utils::compute_mean_and_variance;
 use ppl::{r#gen, GenerativeFunction, Trace};
-use ppl::dsl::trace::SchemeGenerativeFunction;
-use ppl::dsl::trace::SchemeChoiceMap;
 
 pub struct GMMParams {
     mu1: f64,
@@ -27,9 +27,13 @@ pub struct MHParams {
     num_samples: usize,
 }
 
-
-
-fn run_gmm_with_proposal(proposal: &SchemeGenerativeFunction, proposal_args: Vec<Value>, extract_args: Vec<Address>, gmm: GMMParams, mh_params: MHParams) {
+fn run_gmm_with_proposal(
+    proposal: &SchemeGenerativeFunction,
+    proposal_args: Vec<Value>,
+    extract_args: Vec<Address>,
+    gmm: GMMParams,
+    mh_params: MHParams,
+) {
     const SEED: u64 = 42;
 
     let rng = Arc::new(Mutex::new(StdRng::seed_from_u64(SEED)));
@@ -75,7 +79,6 @@ fn run_gmm_with_proposal(proposal: &SchemeGenerativeFunction, proposal_args: Vec
         (list mu1 mu2)
     });
 
-
     let args = vec![
         Value::Float(gmm.sigma1),
         Value::Float(gmm.sigma2),
@@ -83,7 +86,6 @@ fn run_gmm_with_proposal(proposal: &SchemeGenerativeFunction, proposal_args: Vec
         data.clone(),
     ];
     let extract_args = make_extract_args(extract_args);
-
 
     let mut trace = model.simulate(rng.clone(), args.clone());
     let mut attempts = 0;
@@ -146,19 +148,37 @@ fn run_gmm_with_proposal(proposal: &SchemeGenerativeFunction, proposal_args: Vec
     let (mean_mu2, variance_mu2) = compute_mean_and_variance(&history, "mu2");
 
     // Check acceptance rate
-    assert!(acceptance_rate > 0.1 && acceptance_rate < 0.9, "Acceptance rate {} is not in the range 0.1 to 0.9", acceptance_rate);
+    assert!(
+        acceptance_rate > 0.1 && acceptance_rate < 0.9,
+        "Acceptance rate {} is not in the range 0.1 to 0.9",
+        acceptance_rate
+    );
 
     // Check mean and variance
-    assert!((mean_mu1 - gmm.mu1).abs() < 0.6, "Mean mu1 {} is not close to the true value {}", mean_mu1, gmm.mu1);
-    assert!(variance_mu1 > 0.0 && variance_mu1 < 2.5, "Variance mu1 {} is not in the range 0.0 to 2.5", variance_mu1);
+    assert!(
+        (mean_mu1 - gmm.mu1).abs() < 0.6,
+        "Mean mu1 {} is not close to the true value {}",
+        mean_mu1,
+        gmm.mu1
+    );
+    assert!(
+        variance_mu1 > 0.0 && variance_mu1 < 2.5,
+        "Variance mu1 {} is not in the range 0.0 to 2.5",
+        variance_mu1
+    );
 
-    assert!((mean_mu2 - gmm.mu2).abs() < 0.6, "Mean mu2 {} is not close to the true value {}", mean_mu2, gmm.mu2);
-    assert!(variance_mu2 > 0.0 && variance_mu2 < 2.5, "Variance mu2 {} is not in the range 0.0 to 2.5", variance_mu2);
-
-    
+    assert!(
+        (mean_mu2 - gmm.mu2).abs() < 0.6,
+        "Mean mu2 {} is not close to the true value {}",
+        mean_mu2,
+        gmm.mu2
+    );
+    assert!(
+        variance_mu2 > 0.0 && variance_mu2 < 2.5,
+        "Variance mu2 {} is not in the range 0.0 to 2.5",
+        variance_mu2
+    );
 }
-
-
 
 #[test]
 fn test_gmm_with_symmetric_proposal() {
@@ -177,10 +197,7 @@ fn test_gmm_with_symmetric_proposal() {
         p: 0.5,
     };
 
-    let extract_args = vec![
-        Address::from("mu1"), 
-        Address::from("mu2")
-    ];
+    let extract_args = vec![Address::from("mu1"), Address::from("mu2")];
 
     // Define proposal
     let proposal_args = vec![
@@ -194,7 +211,6 @@ fn test_gmm_with_symmetric_proposal() {
 
     run_gmm_with_proposal(&proposal, proposal_args, extract_args, gmm, mh_params);
 }
-
 
 #[test]
 fn test_gmm_with_asymmetric_proposal() {
@@ -213,10 +229,7 @@ fn test_gmm_with_asymmetric_proposal() {
         num_samples: 2000,
     };
 
-    let extract_args = vec![
-        Address::from("mu1"), 
-        Address::from("mu2")
-    ];
+    let extract_args = vec![Address::from("mu1"), Address::from("mu2")];
 
     // Define proposal
     let proposal_args = vec![

@@ -4,13 +4,13 @@ use wasm_bindgen::prelude::*;
 use ppl::address::{Address, Selection};
 use ppl::dsl::ast::Value;
 use ppl::dsl::parser::parse_string;
-use ppl::dsl::trace::{Record, SchemeDSLTrace, SchemeGenerativeFunction, SchemeChoiceMap};
 use ppl::dsl::Literal;
+use ppl::dynamic::trace::{Record, SchemeChoiceMap, SchemeDSLTrace, SchemeGenerativeFunction};
 use ppl::gfi::{GenerativeFunction, Trace};
 use ppl::inference::{metropolis_hastings, metropolis_hastings_with_proposal};
 use rand::distributions::Distribution;
 
-use ppl::dsl::trace::make_extract_args;
+use ppl::dynamic::trace::make_extract_args;
 use rand::{rngs::StdRng, SeedableRng};
 use statrs::distribution::{Bernoulli, Normal};
 use std::sync::{Arc, Mutex};

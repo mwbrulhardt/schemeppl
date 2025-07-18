@@ -7,8 +7,8 @@ use rand::SeedableRng;
 use statrs::distribution::{Bernoulli, Normal};
 
 use ppl::address::Selection;
-use ppl::dsl::trace::{SchemeChoiceMap, SchemeGenerativeFunction};
 use ppl::dsl::{Expression, Literal, Value};
+use ppl::dynamic::trace::{SchemeChoiceMap, SchemeGenerativeFunction};
 use ppl::gfi::GenerativeFunction;
 use ppl::inference::metropolis_hastings;
 use ppl::r#gen;
