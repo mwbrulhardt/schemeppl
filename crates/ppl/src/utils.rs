@@ -1,7 +1,7 @@
 use num_traits::ToPrimitive;
 
 use crate::address::Address;
-use crate::dsl::trace::SchemeDSLTrace;
+use crate::dynamic::trace::SchemeDSLTrace;
 
 /// Compute the mean and variance of a given address in the history
 /// Works specifically with SchemeDSLTrace and returns (mean, variance) for float values

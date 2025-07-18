@@ -1,51 +1,11 @@
 use crate::address::{Address, Selection};
 use crate::dsl::ast::Value;
-use crate::dsl::primitives::{create_distribution, ValueDistribution};
-use crate::dsl::trace::{Record, SchemeChoiceMap, SchemeDSLTrace};
+use crate::dsl::eval::{ChoiceEvent, ChoiceHandler};
+use crate::dsl::primitives::create_distribution;
+use crate::dynamic::trace::{Record, SchemeChoiceMap, SchemeDSLTrace};
 use rand::rngs::StdRng;
-use rand::RngCore;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
-
-/// Represents a choice event that occurs during evaluation
-#[derive(Debug, Clone)]
-pub struct ChoiceEvent {
-    pub address: Address,
-    pub dist_name: String,
-    pub dist_args: Vec<Value>,
-    pub obs: Option<Value>,
-}
-
-impl ChoiceEvent {
-    pub fn new(
-        address: Address,
-        dist_name: String,
-        dist_args: Vec<Value>,
-        obs: Option<Value>,
-    ) -> Self {
-        Self {
-            address,
-            dist_name,
-            dist_args,
-            obs,
-        }
-    }
-
-    pub fn sample(&self, rng: &mut dyn RngCore, dist: &ValueDistribution) -> Value {
-        if self.obs.is_some() {
-            self.obs.clone().unwrap()
-        } else {
-            dist.sample(rng)
-        }
-    }
-}
-
-/// Trait for handling choice and probability events during evaluation
-pub trait ChoiceHandler {
-    /// Called when a choice is made (sample or observe)
-    /// Returns the final value and score
-    fn on_choice(&mut self, event: &ChoiceEvent) -> Result<Value, String>;
-}
 
 pub struct EmptyChoiceHandler;
 

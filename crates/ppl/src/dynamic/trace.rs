@@ -6,10 +6,9 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use crate::dsl::ast::{Env, Expression, Literal, Value};
-use crate::dsl::eval::{eval, standard_env};
-use crate::dsl::handlers::{
-    ChoiceHandler, DefaultChoiceHandler, EmptyChoiceHandler, GenerateHandler, RegenerateHandler,
-    UpdateHandler,
+use crate::dsl::eval::{eval, standard_env, ChoiceHandler};
+use crate::dynamic::handlers::{
+    DefaultChoiceHandler, EmptyChoiceHandler, GenerateHandler, RegenerateHandler, UpdateHandler,
 };
 use crate::{
     address::{Address, Selection},

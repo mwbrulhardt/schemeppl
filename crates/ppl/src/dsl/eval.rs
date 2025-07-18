@@ -1,10 +1,51 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use rand::RngCore;
+
 use crate::address::Address;
 use crate::dsl::ast::{Env, Expression, HostFn, Literal, Procedure, Value};
-use crate::dsl::handlers::{ChoiceEvent, ChoiceHandler};
 use crate::dsl::primitives::*;
+
+/// Represents a choice event that occurs during evaluation
+#[derive(Debug, Clone)]
+pub struct ChoiceEvent {
+    pub address: Address,
+    pub dist_name: String,
+    pub dist_args: Vec<Value>,
+    pub obs: Option<Value>,
+}
+
+impl ChoiceEvent {
+    pub fn new(
+        address: Address,
+        dist_name: String,
+        dist_args: Vec<Value>,
+        obs: Option<Value>,
+    ) -> Self {
+        Self {
+            address,
+            dist_name,
+            dist_args,
+            obs,
+        }
+    }
+
+    pub fn sample(&self, rng: &mut dyn RngCore, dist: &ValueDistribution) -> Value {
+        if self.obs.is_some() {
+            self.obs.clone().unwrap()
+        } else {
+            dist.sample(rng)
+        }
+    }
+}
+
+/// Trait for handling choice and probability events during evaluation
+pub trait ChoiceHandler {
+    /// Called when a choice is made (sample or observe)
+    /// Returns the final value and score
+    fn on_choice(&mut self, event: &ChoiceEvent) -> Result<Value, String>;
+}
 
 /// Helper function to evaluate a distribution and either sample from it or score a value
 pub fn eval_distribution(

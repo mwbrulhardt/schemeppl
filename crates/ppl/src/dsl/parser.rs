@@ -161,7 +161,7 @@ macro_rules! gen {
         let wrapped = format!("( {} )", src);
         let exprs = $crate::dsl::parser::parse_string(&wrapped);
         let param_names = vec![$(stringify!($param).to_string()),*];
-        $crate::dsl::trace::SchemeGenerativeFunction::new(exprs, param_names)
+        $crate::dynamic::trace::SchemeGenerativeFunction::new(exprs, param_names)
     }};
 
     // Original version that just returns expressions (for backward compatibility)
